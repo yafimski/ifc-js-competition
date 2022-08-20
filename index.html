@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="../../../favicon.ico" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://kit.fontawesome.com/ef121948e3.js" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="styles.css" />
+    <title>IFC.js - Competition - Colorize!</title>
+  </head>
+  <body>
+      
+      <div id="viewer-container"></div>
+      
+      <div id="button-column" class="toolbar">
+        <label class="dynamic tool">
+          <i class="fa-solid fa-upload fa-4x"><input type="file" id="file-input"/></input></i>
+        </label>
+        <label class="dynamic tool" id="Category">
+          <i class="fa-solid fa-cubes fa-4x"></i>
+        </label>
+        <label class="dynamic tool" id="Material">
+          <i class="fa-solid fa-trowel fa-4x"></i>
+        </label>
+      </div>
+
+      <div id="side-panel" class="hidden"></div>
+
+      <footer>
+        <a href="https://ifcjs.github.io/info/docs/Introduction" class="generic-anchor" target="_blank" title="IFC.js" itemprop="significantLink">
+          <i class="fa-solid fa-graduation-cap fa-2x"></i>
+        </a>
+        <a href="https://github.com" class="generic-anchor" target="_blank" title="GitHub" itemprop="significantLink">
+          <i class="fa-brands fa-github fa-2x"></i>
+        </a>
+      </footer>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5"></script>
+    <script type="module" src="bundle.js"></script>
+  </body>
+</html>

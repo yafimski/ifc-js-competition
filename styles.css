@@ -1,0 +1,215 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: "Roboto", sans-serif;
+}
+
+html,
+body {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+input {
+  height: 100%;
+  width: 100%;
+}
+
+label {
+  --hover-text: rgb(255, 255, 255);
+  color: #fff;
+  border: 1px solid black;
+  border-radius: 4px;
+  height: 2rem;
+  width: 2rem;
+  margin-left: 0;
+  padding-top: 0.8rem;
+  padding: 0.8rem 2rem;
+  font-size: 12px;
+  transition: 0.5s;
+}
+
+label:hover {
+  transform: translate(-0.1rem, -0.1rem);
+  box-shadow: 0.4rem 0.4rem gray;
+}
+
+label:active {
+  transform: translate(0);
+  box-shadow: none;
+}
+
+ul {
+  list-style-type: none;
+}
+
+footer {
+  display: inline-block;
+  z-index: 2;
+  position: fixed;
+  width: 100%;
+  bottom: 0;
+  height: 2rem;
+}
+
+.toolbar {
+  display: flex;
+  flex-direction: row;
+}
+
+.tool {
+  z-index: 1;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  height: 50px;
+  width: 50px;
+  border: 0.1px solid rgb(50, 50, 50);
+  background-color: rgb(255, 255, 255);
+  border-radius: 50%;
+  color: black;
+  text-align: center;
+  font-size: 12px;
+  padding: 0.5rem;
+  cursor: pointer;
+}
+
+.fa-4x {
+  vertical-align: middle;
+  text-align: center;
+  font-size: 30px;
+}
+
+.IroWheel {
+  margin: auto;
+  position: relative;
+  top: 2rem;
+  height: 100%;
+}
+
+.IroColorPicker {
+  height: 100%;
+  margin-bottom: 1rem;
+}
+
+.hidden {
+  display: none;
+}
+
+.active {
+  display: block;
+  display: flex;
+}
+
+.generic-anchor {
+  color: black;
+  margin-right: 0.5rem;
+  float: right;
+  padding: 0.1rem;
+  font-size: 12px;
+}
+
+.generic-anchor:hover {
+  color: rgb(140, 215, 250);
+}
+
+.panel-icon {
+  padding: 0.3rem;
+  margin-bottom: 0.2rem;
+  float: right;
+  margin: auto;
+}
+
+.panel-icon:hover {
+  color: rgb(50, 150, 60);
+  cursor: pointer;
+}
+
+#panel-footer {
+  display: block;
+  width: 100%;
+  float: right;
+  margin-top: 1rem;
+  font-size: 26px;
+}
+
+#hex-span {
+  font-size: 16px;
+  padding-left: 0.5rem;
+  margin-right: 2rem;
+}
+
+#title-span {
+  padding-top: 1rem;
+  display: block;
+  text-align: center;
+  font-size: 1rem;
+}
+
+#dropdown-content {
+  background-color: white;
+  box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.1);
+  margin: 1rem 2rem 0 3rem;
+  border: solid 0.5px #555;
+  padding: 10px 20px;
+  position: relative;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  z-index: 5;
+}
+
+#dropdown-content li:hover {
+  background-color: rgb(241, 240, 237);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+#dropdown-title {
+  cursor: pointer;
+  padding-top: 1rem;
+  display: block;
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+#side-panel {
+  position: absolute;
+  flex-direction: column;
+  background-color: white;
+  margin-left: 2rem;
+  margin-top: 20%;
+  z-index: 1;
+  border: solid 1px #555;
+  box-shadow: 5px -5px 10px 0px rgb(0 0 0 / 30%);
+  border-radius: 5px;
+}
+
+#viewer-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  outline: none;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+}
+
+#button-column {
+  margin-left: 0.5rem;
+  position: absolute;
+  height: 100vh;
+  width: 4rem;
+  display: flex;
+  justify-content: center;
+  flex-direction: column;
+  z-index: 2;
+}
+
+#file-input {
+  position: relative;
+  padding: 1rem, 0, 0, 0;
+  display: none;
+  z-index: 3;
+}

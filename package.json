@@ -1,0 +1,31 @@
+{
+  "name": "ifc-colorize",
+  "version": "1.0.0",
+  "description": "IFC.js Competition Entry",
+  "main": "app.js",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w"
+  },
+  "author": "Yafim Simanovsky",
+  "license": "MIT",
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^13.0.2",
+    "rollup": "^2.45.2"
+  },
+  "dependencies": {
+    "@jaames/iro": "^5.5.2",
+    "three": "^0.135.0",
+    "web-ifc": "^0.0.35",
+    "web-ifc-three": "^0.0.118",
+    "web-ifc-viewer": "^1.0.208"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yafimski/ifc-js-competition.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yafimski/ifc-js-competition/issues"
+  },
+  "homepage": "https://github.com/yafimski/ifc-js-competition#readme"
+}

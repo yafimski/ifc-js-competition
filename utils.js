@@ -35,10 +35,6 @@ export function decodeMaterialLayersItem(materialObjectsArray, id, materialNames
   }
 }
 
-export function compileCustomId(ids, prefix) {
-  return prefix + ids.slice(0, 10).join("");
-}
-
 export function decodeIFCString(ifcString) {
   const ifcUnicodeRegEx = /\\X2\\(.*?)\\X0\\/giu;
   let resultString = ifcString;
@@ -58,4 +54,8 @@ function addMaterialNameToArray(name, id, materialNames) {
   } else {
     materialNames[name].push(id);
   }
+}
+
+export function shuffle(array) {
+  return array.sort(() => Math.random() - 0.5);
 }

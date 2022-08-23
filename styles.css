@@ -17,6 +17,19 @@ input {
   width: 100%;
 }
 
+ul {
+  list-style-type: none;
+}
+
+footer {
+  display: inline-block;
+  z-index: 2;
+  position: fixed;
+  width: 100%;
+  bottom: 0;
+  height: 2rem;
+}
+
 label {
   --hover-text: rgb(255, 255, 255);
   color: #fff;
@@ -31,36 +44,13 @@ label {
   transition: 0.5s;
 }
 
-label:hover {
-  transform: translate(-0.1rem, -0.1rem);
-  box-shadow: 0.4rem 0.4rem gray;
-}
-
-label:active {
-  transform: translate(0);
-  box-shadow: none;
-}
-
-ul {
-  list-style-type: none;
-}
-
-footer {
-  display: inline-block;
-  z-index: 2;
-  position: fixed;
-  width: 100%;
-  bottom: 0;
-  height: 2rem;
-}
-
 .toolbar {
   display: flex;
   flex-direction: row;
 }
 
 .tool {
-  z-index: 1;
+  z-index: 4;
   margin-top: 0.5rem;
   margin-bottom: 0.5rem;
   height: 50px;
@@ -110,15 +100,25 @@ footer {
   font-size: 12px;
 }
 
-.generic-anchor:hover {
-  color: rgb(140, 215, 250);
-}
-
 .panel-icon {
   padding: 0.3rem;
   margin-bottom: 0.2rem;
   float: right;
   margin: auto;
+}
+
+label:hover {
+  transform: translate(-0.1rem, -0.1rem);
+  box-shadow: 0.4rem 0.4rem gray;
+}
+
+label:active {
+  transform: translate(0);
+  box-shadow: none;
+}
+
+.generic-anchor:hover {
+  color: rgb(140, 215, 250);
 }
 
 .panel-icon:hover {
@@ -152,18 +152,12 @@ footer {
   box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.1);
   margin: 1rem 2rem 0 3rem;
   border: solid 0.5px #555;
-  padding: 10px 20px;
+  padding: 10px 0px 10px 20px;
   position: relative;
   font-size: 0.8rem;
   white-space: nowrap;
   text-overflow: ellipsis;
   z-index: 5;
-}
-
-#dropdown-content li:hover {
-  background-color: rgb(241, 240, 237);
-  font-size: 0.8rem;
-  cursor: pointer;
 }
 
 #dropdown-title {
@@ -180,7 +174,7 @@ footer {
   background-color: white;
   margin-left: 2rem;
   margin-top: 20%;
-  z-index: 1;
+  z-index: 3;
   border: solid 1px #555;
   box-shadow: 5px -5px 10px 0px rgb(0 0 0 / 30%);
   border-radius: 5px;
@@ -204,7 +198,7 @@ footer {
   display: flex;
   justify-content: center;
   flex-direction: column;
-  z-index: 2;
+  z-index: 4;
 }
 
 #file-input {
@@ -212,4 +206,15 @@ footer {
   padding: 1rem, 0, 0, 0;
   display: none;
   z-index: 3;
+}
+
+#elem_list {
+  overflow-y: scroll;
+  max-height: 10rem;
+}
+
+#dropdown-content li:hover {
+  background-color: rgb(241, 240, 237);
+  font-size: 0.8rem;
+  cursor: pointer;
 }

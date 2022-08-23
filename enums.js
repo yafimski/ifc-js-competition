@@ -6,6 +6,16 @@ import {
   IFCWINDOW,
   IFCPLATE,
   IFCMEMBER,
+  IFCBEAM,
+  IFCCOLUMN,
+  IFCCURTAINWALL,
+  IFCRAILING,
+  IFCRAMP,
+  IFCSTAIR,
+  IFCSTAIRFLIGHT,
+  IFCROOF,
+  IFCPILE,
+  IFCFOOTING,
 } from "web-ifc";
 
 export const IfcCategories = {
@@ -16,6 +26,16 @@ export const IfcCategories = {
   IFCWINDOW,
   IFCPLATE,
   IFCMEMBER,
+  IFCBEAM,
+  IFCCOLUMN,
+  IFCCURTAINWALL,
+  IFCRAILING,
+  IFCRAMP,
+  IFCSTAIR,
+  IFCSTAIRFLIGHT,
+  IFCROOF,
+  IFCPILE,
+  IFCFOOTING,
 };
 
 export const categoryNameMap = {
@@ -26,9 +46,40 @@ export const categoryNameMap = {
   Windows: "IFCWINDOW",
   CurtainPanels: "IFCPLATE",
   StructuralMembers: "IFCMEMBER",
+  Beams: "IFCBEAM",
+  Columns: "IFCCOLUMN",
+  CurtainWalls: "IFCCURTAINWALL",
+  Railings: "IFCRAILING",
+  Ramps: "IFCRAMP",
+  Stairs: "IFCSTAIR",
+  StairFlights: "IFCSTAIRFLIGHT",
+  Roofs: "IFCROOF",
+  Piles: "IFCPILE",
+  Footings: "IFCFOOTING",
 };
 
 export const panelNames = {
   Category: "Category",
   Material: "Material",
+  Randomize: "Randomize",
 };
+
+export const colorSet = [
+  "0xfe4a49",
+  "0x2ab7ca",
+  "0xfed766",
+  "0xf6abb6",
+  "0x03396c",
+  "0x6497b1",
+  "0x651e3e",
+  "0x009688",
+  "0xfdf498",
+  "0xf37736",
+  "0xbbbbbb",
+  "0xffcc5c",
+  "0x3c2f2f",
+  "0xbe9b7b",
+  "0x008744",
+  "0xffaaa5",
+  "0xffc425",
+];

@@ -1,7 +1,6 @@
 import { Color, MeshLambertMaterial } from "three";
-import { IFCLoader } from "web-ifc-three";
 import { IfcViewerAPI } from "web-ifc-viewer";
-import { IfcCategories, categoryNameMap, panelNames } from "./enums.js";
+import { IfcCategories, categoryNameMap, panelNames, colorSet } from "./enums.js";
 import * as Utils from "./utils.js";
 
 const container = document.getElementById("viewer-container");
@@ -13,13 +12,14 @@ viewer.grid.setGrid();
 viewer.axes.setAxes();
 const scene = viewer.context.getScene();
 
-let loader = viewer.IFC.loader.ifcManager;
+const ifcManager = viewer.IFC.loader.ifcManager;
 
 let models = [];
 let modelData = {
   categories: {},
   materials: {},
   expressIds: [],
+  subsets: {},
 };
 let modelSubsets = [];
 
@@ -33,29 +33,16 @@ const input = document.getElementById("file-input");
 input.addEventListener(
   "change",
   async () => {
-    console.log(input.files[0]);
-
-    if (models.length > 0) {
-      console.log("Purging Models...");
-      await purgeModels();
-    }
-
-    console.log(models.length);
+    await purgeModels();
 
     const url = URL.createObjectURL(input.files[0]);
     const model = await viewer.IFC.loadIfcUrl(url);
     models.push(model);
     scene.add(model);
 
-    console.log(models);
-
+    await setMainButtonEvents(model.modelID);
     viewer.context.renderer.postProduction.active = true;
-    await compileModelData();
-
-    console.log(model.modelID);
-    console.log(modelData);
-
-    await setMainButtonEvents();
+    await compileModelData(model.modelID);
   },
   false
 );
@@ -63,32 +50,31 @@ input.addEventListener(
 async function purgeModels() {
   removeElementsFromScene(models);
   removeElementsFromScene(modelSubsets);
+  models = [];
+  modelSubsets = [];
   modelData = {
     categories: {},
     materials: {},
     expressIds: [],
+    subsets: {},
   };
-
-  loader = null;
-  loader = new IFCLoader();
-  loader = viewer.IFC.loader.ifcManager;
 
   const buttons = document.getElementsByClassName("dynamic");
   for (const button of buttons) {
     button.outerHTML = button.outerHTML;
   }
 
-  // const sidePanel = document.getElementById("side-panel");
-  // sidePanel.firstChild.remove();
+  const sidePanel = document.getElementById("side-panel");
+  Utils.hideDomElement(sidePanel);
 }
 
-async function setMainButtonEvents() {
+async function setMainButtonEvents(modelID) {
   const buttons = document.getElementsByClassName("dynamic");
+
   for (const button of buttons) {
     button.addEventListener("click", function () {
       const sidePanel = document.getElementById("side-panel");
       Utils.hideDomElement(sidePanel);
-
       for (const button of buttons) {
         button.style.backgroundColor = "white";
         button.style.border = "0.5px solid black";
@@ -99,7 +85,11 @@ async function setMainButtonEvents() {
         prevButton.style.border = "0.5px solid black";
         prevButton = undefined;
       } else {
-        compileAndShowUserPanel(button.id);
+        if (button.id == panelNames.Randomize) {
+          colorAllCategoriesAtRandom(Object.values(categoryNameMap), modelID);
+        } else {
+          compileAndShowUserPanel(button.id, modelID);
+        }
         button.style.backgroundColor = "navajowhite";
         button.style.border = "none";
         prevButton = button;
@@ -108,13 +98,24 @@ async function setMainButtonEvents() {
   }
 }
 
-async function compileAndShowUserPanel(buttonId) {
-  await toggleButtonSidePanel(buttonId);
+async function colorAllCategoriesAtRandom(categories, modelID) {
+  const shuffledColors = Utils.shuffle(colorSet);
+  for (let i = 0; i < categories.length; i++) {
+    console.log(i);
+    const ids = modelData.categories[categories[i]];
+    const categoryName = Object.keys(categoryNameMap)[categories[i]];
+    const hexColor = parseInt(shuffledColors[i]);
+    applyColorToElements(ids, hexColor, categoryName, modelID);
+  }
+}
+
+async function compileAndShowUserPanel(buttonId, modelID) {
+  await toggleButtonSidePanel(buttonId, modelID);
   const hexSpan = document.getElementById("hex-span");
   hexSpan.textContent = colorHexValue;
 }
 
-async function toggleButtonSidePanel(buttonId) {
+async function toggleButtonSidePanel(buttonId, modelID) {
   const sidePanel = document.getElementById("side-panel");
   while (sidePanel.firstChild) {
     sidePanel.removeChild(sidePanel.lastChild);
@@ -122,11 +123,20 @@ async function toggleButtonSidePanel(buttonId) {
 
   let values = [];
   if (buttonId == panelNames.Category) {
-    values = Object.keys(categoryNameMap);
+    const categoryKeys = Object.keys(modelData.categories);
+    const categoryValues = Object.values(modelData.categories);
+    for (let i = 0; i < categoryKeys.length; i++) {
+      if (categoryValues[i].length > 0) {
+        const categoryName = Object.keys(categoryNameMap).find(
+          (key) => categoryNameMap[key] === categoryKeys[i]
+        );
+        values.push(categoryName);
+      }
+    }
   } else if (buttonId == panelNames.Material) {
     values = Object.keys(modelData.materials);
   }
-  await populateSidePanel(buttonId, sidePanel, values);
+  await populateSidePanel(buttonId, sidePanel, values, modelID);
   Utils.showDomElement(sidePanel);
 
   window.ondblclick = () => {
@@ -139,7 +149,7 @@ async function toggleButtonSidePanel(buttonId) {
   };
 }
 
-async function populateSidePanel(buttonId, sidePanel, valueList) {
+async function populateSidePanel(buttonId, sidePanel, valueList, modelID) {
   const dropdownContainer = Utils.createAndSetDomElementAttributes("div", ["id"], ["dropdown"]);
 
   sidePanel.appendChild(createPanelContent(dropdownContainer, buttonId, valueList));
@@ -149,23 +159,23 @@ async function populateSidePanel(buttonId, sidePanel, valueList) {
   await createColorPicker();
   createPanelFooter();
 
-  await applyDropdownEvents(dropdownSelections);
-  applyPanelFooterEvents(buttonId);
+  await dropdownEvents(dropdownSelections);
+  applyPanelFooterEvents(buttonId, modelID);
 }
 
-function applyPanelFooterEvents(buttonId) {
+function applyPanelFooterEvents(buttonId, modelID) {
   const buttonApply = document.getElementById("apply-button");
   const buttonReset = document.getElementById("reset-button");
 
   buttonApply.addEventListener("click", async function () {
-    await applyColorsEventLogic(buttonId);
+    await applyColorsEventLogic(buttonId, modelID);
   });
   buttonReset.addEventListener("click", async function () {
     await removeElementsFromScene(modelSubsets);
   });
 }
 
-async function applyColorsEventLogic(buttonId) {
+async function applyColorsEventLogic(buttonId, modelID) {
   let matchingElementIds = undefined;
   const currentDropdownText = prevDropdown.textContent;
 
@@ -173,11 +183,10 @@ async function applyColorsEventLogic(buttonId) {
     const categoryString = categoryNameMap[currentDropdownText];
     matchingElementIds = modelData.categories[categoryString];
   } else if (buttonId == panelNames.Material) {
-    matchingElementIds = await collectElementsWithMaterials(currentDropdownText);
+    matchingElementIds = await collectElementsWithMaterials(currentDropdownText, modelID);
   }
-
-  await removeSingleSubset(matchingElementIds, currentDropdownText, loader);
-  applyColorToElements(matchingElementIds, colorResult, currentDropdownText);
+  await removeSingleSubset(currentDropdownText);
+  applyColorToElements(matchingElementIds, colorResult, currentDropdownText, modelID);
 }
 
 function createPanelFooter() {
@@ -220,7 +229,7 @@ function createPanelContent(dropdownContainer, buttonId, values) {
   const dropdownUl = Utils.createAndSetDomElementAttributes(
     "ul",
     ["id", "tabindex", "role"],
-    ["ss_elem_list", "0", "listbox"]
+    ["elem_list", "0", "listbox"]
   );
   for (const value of values) {
     const dropdownLi = Utils.createAndSetDomElementAttributes(
@@ -240,24 +249,24 @@ function createPanelContent(dropdownContainer, buttonId, values) {
   return dropdownContainer;
 }
 
-async function applyDropdownEvents(selections) {
+async function dropdownEvents(selections) {
   for (const dropdown of selections) {
     dropdown.addEventListener("click", async function () {
       for (const dropdown of selections) {
         dropdown.style.backgroundColor = "white";
       }
       prevDropdown = dropdown;
-      dropdown.style.backgroundColor = "rgb(241, 240, 237)";
+      dropdown.style.backgroundColor = "rgb(240, 240, 240)";
     });
   }
 }
 
-async function collectElementsWithMaterials(materialName) {
+async function collectElementsWithMaterials(materialName, modelID) {
   const matchingElementIds = [];
   for (const id of modelData.expressIds) {
     const materialNames = {};
 
-    const materialProps = await loader.getMaterialsProperties(models[0].modelID, id, true);
+    const materialProps = await ifcManager.getMaterialsProperties(modelID, id, true);
     if (materialProps[0] != undefined) {
       filterMaterialByType(id, materialProps[0], materialNames);
     }
@@ -269,19 +278,17 @@ async function collectElementsWithMaterials(materialName) {
   return matchingElementIds;
 }
 
-async function applyColorToElements(expressIds, hex, currentDropdownText) {
+async function applyColorToElements(expressIds, hex, currentDropdownText, modelID) {
   const highlightMaterial = new MeshLambertMaterial({
     transparent: true,
-    opacity: 0.6,
+    opacity: 0.5,
     color: hex,
     depthTest: false,
   });
 
-  const subset = await createSubsetFromIds(expressIds, highlightMaterial, currentDropdownText);
-  console.log(subset);
-  console.log(subset.id);
-  console.log(subset.name);
+  const subset = await createSubsetFromIds(expressIds, highlightMaterial, modelID);
 
+  modelData.subsets[`${currentDropdownText}`] = subset;
   scene.add(subset);
   modelSubsets.push(subset);
 }
@@ -310,16 +317,15 @@ async function createColorPicker() {
   dropdown.appendChild(colorPickerDiv);
 }
 
-async function compileModelData() {
+async function compileModelData(modelID) {
   for (const categoryName of Object.keys(IfcCategories)) {
     const category = IfcCategories[categoryName];
-    const ids = await loader.getAllItemsOfType(0, category, true);
+    const ids = await ifcManager.getAllItemsOfType(modelID, category, true);
     const expressIDs = ids.map((id) => id.expressID);
     modelData.categories[`${categoryName}`] = expressIDs;
 
     modelData.expressIds = [...modelData.expressIds, ...expressIDs];
-
-    const materialsObjects = await collectElementsMaterials(expressIDs);
+    const materialsObjects = await collectElementsMaterials(expressIDs, modelID);
     const materialNames = await materialNamesFromObjects(materialsObjects);
     modelData.materials = { ...modelData.materials, ...materialNames };
   }
@@ -352,10 +358,10 @@ async function filterMaterialByType(id, item, materialNames) {
   }
 }
 
-async function collectElementsMaterials(expressIDs) {
+async function collectElementsMaterials(expressIDs, modelID) {
   const materials = {};
   for (const id of expressIDs) {
-    const materialProps = await loader.getMaterialsProperties(models[0].modelID, id, true);
+    const materialProps = await ifcManager.getMaterialsProperties(modelID, id, true);
     if (materialProps.length > 0) {
       materials[id] = materialProps;
     }
@@ -363,37 +369,25 @@ async function collectElementsMaterials(expressIDs) {
   return materials;
 }
 
-async function removeSingleSubset(ids, customIdPrefix) {
-  const customIdString = Utils.compileCustomId(ids, customIdPrefix);
-  console.log(customIdString);
-  console.log(modelSubsets);
-  // ifcLoader.clearSubset(models[0].modelID, ids, customIdString);
-  // const relevantSubset = ifcLoader.getSubset(models[0].modelID, customIdString);
-  // console.log(relevantSubset);
-  // ifcLoader.removeFromSubset(models[0].modelID, ids, customIdString)
-  for (const subset of modelSubsets) {
-    if (subset.customID == customIdString) {
-      scene.remove(subset);
-    }
-  }
+async function removeSingleSubset(currentDropdownText) {
+  const subsetToRemove = modelData.subsets[`${currentDropdownText}`];
+  scene.remove(subsetToRemove);
 }
 
 async function removeElementsFromScene(elements) {
   for (const element of elements) {
     scene.remove(element);
   }
-  elements = [];
 }
 
-async function createSubsetFromIds(ids, pickedMaterial, currentDropdownText) {
-  const customIdString = Utils.compileCustomId(ids, currentDropdownText);
-
-  return loader.createSubset({
-    modelID: models[0].modelID,
+async function createSubsetFromIds(ids, pickedMaterial, modelID) {
+  const subset = ifcManager.createSubset({
+    modelID: modelID,
     material: pickedMaterial,
     ids,
     scene,
     removePrevious: true,
-    customID: customIdString,
   });
+
+  return subset;
 }

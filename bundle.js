@@ -44151,6 +44151,2745 @@ if ( typeof window !== 'undefined' ) {
 
 }
 
+var NavigationModes;
+(function (NavigationModes) {
+    NavigationModes[NavigationModes["Orbit"] = 0] = "Orbit";
+    NavigationModes[NavigationModes["FirstPerson"] = 1] = "FirstPerson";
+    NavigationModes[NavigationModes["Plan"] = 2] = "Plan";
+})(NavigationModes || (NavigationModes = {}));
+var CameraProjections;
+(function (CameraProjections) {
+    CameraProjections[CameraProjections["Perspective"] = 0] = "Perspective";
+    CameraProjections[CameraProjections["Orthographic"] = 1] = "Orthographic";
+})(CameraProjections || (CameraProjections = {}));
+class IfcComponent {
+    constructor(context) {
+        context.addComponent(this);
+    }
+    update(_delta) { }
+}
+var dimension;
+(function (dimension) {
+    dimension["x"] = "x";
+    dimension["y"] = "y";
+    dimension["z"] = "z";
+})(dimension || (dimension = {}));
+
+const _raycaster$1 = new Raycaster();
+
+const _tempVector = new Vector3();
+const _tempVector2 = new Vector3();
+const _tempQuaternion = new Quaternion();
+const _unit = {
+	X: new Vector3( 1, 0, 0 ),
+	Y: new Vector3( 0, 1, 0 ),
+	Z: new Vector3( 0, 0, 1 )
+};
+
+const _changeEvent = { type: 'change' };
+const _mouseDownEvent = { type: 'mouseDown' };
+const _mouseUpEvent = { type: 'mouseUp', mode: null };
+const _objectChangeEvent = { type: 'objectChange' };
+
+class TransformControls extends Object3D {
+
+	constructor( camera, domElement ) {
+
+		super();
+
+		if ( domElement === undefined ) {
+
+			console.warn( 'THREE.TransformControls: The second parameter "domElement" is now mandatory.' );
+			domElement = document;
+
+		}
+
+		this.visible = false;
+		this.domElement = domElement;
+		this.domElement.style.touchAction = 'none'; // disable touch scroll
+
+		const _gizmo = new TransformControlsGizmo();
+		this._gizmo = _gizmo;
+		this.add( _gizmo );
+
+		const _plane = new TransformControlsPlane();
+		this._plane = _plane;
+		this.add( _plane );
+
+		const scope = this;
+
+		// Defined getter, setter and store for a property
+		function defineProperty( propName, defaultValue ) {
+
+			let propValue = defaultValue;
+
+			Object.defineProperty( scope, propName, {
+
+				get: function () {
+
+					return propValue !== undefined ? propValue : defaultValue;
+
+				},
+
+				set: function ( value ) {
+
+					if ( propValue !== value ) {
+
+						propValue = value;
+						_plane[ propName ] = value;
+						_gizmo[ propName ] = value;
+
+						scope.dispatchEvent( { type: propName + '-changed', value: value } );
+						scope.dispatchEvent( _changeEvent );
+
+					}
+
+				}
+
+			} );
+
+			scope[ propName ] = defaultValue;
+			_plane[ propName ] = defaultValue;
+			_gizmo[ propName ] = defaultValue;
+
+		}
+
+		// Define properties with getters/setter
+		// Setting the defined property will automatically trigger change event
+		// Defined properties are passed down to gizmo and plane
+
+		defineProperty( 'camera', camera );
+		defineProperty( 'object', undefined );
+		defineProperty( 'enabled', true );
+		defineProperty( 'axis', null );
+		defineProperty( 'mode', 'translate' );
+		defineProperty( 'translationSnap', null );
+		defineProperty( 'rotationSnap', null );
+		defineProperty( 'scaleSnap', null );
+		defineProperty( 'space', 'world' );
+		defineProperty( 'size', 1 );
+		defineProperty( 'dragging', false );
+		defineProperty( 'showX', true );
+		defineProperty( 'showY', true );
+		defineProperty( 'showZ', true );
+
+		// Reusable utility variables
+
+		const worldPosition = new Vector3();
+		const worldPositionStart = new Vector3();
+		const worldQuaternion = new Quaternion();
+		const worldQuaternionStart = new Quaternion();
+		const cameraPosition = new Vector3();
+		const cameraQuaternion = new Quaternion();
+		const pointStart = new Vector3();
+		const pointEnd = new Vector3();
+		const rotationAxis = new Vector3();
+		const rotationAngle = 0;
+		const eye = new Vector3();
+
+		// TODO: remove properties unused in plane and gizmo
+
+		defineProperty( 'worldPosition', worldPosition );
+		defineProperty( 'worldPositionStart', worldPositionStart );
+		defineProperty( 'worldQuaternion', worldQuaternion );
+		defineProperty( 'worldQuaternionStart', worldQuaternionStart );
+		defineProperty( 'cameraPosition', cameraPosition );
+		defineProperty( 'cameraQuaternion', cameraQuaternion );
+		defineProperty( 'pointStart', pointStart );
+		defineProperty( 'pointEnd', pointEnd );
+		defineProperty( 'rotationAxis', rotationAxis );
+		defineProperty( 'rotationAngle', rotationAngle );
+		defineProperty( 'eye', eye );
+
+		this._offset = new Vector3();
+		this._startNorm = new Vector3();
+		this._endNorm = new Vector3();
+		this._cameraScale = new Vector3();
+
+		this._parentPosition = new Vector3();
+		this._parentQuaternion = new Quaternion();
+		this._parentQuaternionInv = new Quaternion();
+		this._parentScale = new Vector3();
+
+		this._worldScaleStart = new Vector3();
+		this._worldQuaternionInv = new Quaternion();
+		this._worldScale = new Vector3();
+
+		this._positionStart = new Vector3();
+		this._quaternionStart = new Quaternion();
+		this._scaleStart = new Vector3();
+
+		this._getPointer = getPointer.bind( this );
+		this._onPointerDown = onPointerDown.bind( this );
+		this._onPointerHover = onPointerHover.bind( this );
+		this._onPointerMove = onPointerMove.bind( this );
+		this._onPointerUp = onPointerUp.bind( this );
+
+		this.domElement.addEventListener( 'pointerdown', this._onPointerDown );
+		this.domElement.addEventListener( 'pointermove', this._onPointerHover );
+		this.domElement.addEventListener( 'pointerup', this._onPointerUp );
+
+	}
+
+	// updateMatrixWorld  updates key transformation variables
+	updateMatrixWorld() {
+
+		if ( this.object !== undefined ) {
+
+			this.object.updateMatrixWorld();
+
+			if ( this.object.parent === null ) {
+
+				console.error( 'TransformControls: The attached 3D object must be a part of the scene graph.' );
+
+			} else {
+
+				this.object.parent.matrixWorld.decompose( this._parentPosition, this._parentQuaternion, this._parentScale );
+
+			}
+
+			this.object.matrixWorld.decompose( this.worldPosition, this.worldQuaternion, this._worldScale );
+
+			this._parentQuaternionInv.copy( this._parentQuaternion ).invert();
+			this._worldQuaternionInv.copy( this.worldQuaternion ).invert();
+
+		}
+
+		this.camera.updateMatrixWorld();
+		this.camera.matrixWorld.decompose( this.cameraPosition, this.cameraQuaternion, this._cameraScale );
+
+		this.eye.copy( this.cameraPosition ).sub( this.worldPosition ).normalize();
+
+		super.updateMatrixWorld( this );
+
+	}
+
+	pointerHover( pointer ) {
+
+		if ( this.object === undefined || this.dragging === true ) return;
+
+		_raycaster$1.setFromCamera( pointer, this.camera );
+
+		const intersect = intersectObjectWithRay( this._gizmo.picker[ this.mode ], _raycaster$1 );
+
+		if ( intersect ) {
+
+			this.axis = intersect.object.name;
+
+		} else {
+
+			this.axis = null;
+
+		}
+
+	}
+
+	pointerDown( pointer ) {
+
+		if ( this.object === undefined || this.dragging === true || pointer.button !== 0 ) return;
+
+		if ( this.axis !== null ) {
+
+			_raycaster$1.setFromCamera( pointer, this.camera );
+
+			const planeIntersect = intersectObjectWithRay( this._plane, _raycaster$1, true );
+
+			if ( planeIntersect ) {
+
+				this.object.updateMatrixWorld();
+				this.object.parent.updateMatrixWorld();
+
+				this._positionStart.copy( this.object.position );
+				this._quaternionStart.copy( this.object.quaternion );
+				this._scaleStart.copy( this.object.scale );
+
+				this.object.matrixWorld.decompose( this.worldPositionStart, this.worldQuaternionStart, this._worldScaleStart );
+
+				this.pointStart.copy( planeIntersect.point ).sub( this.worldPositionStart );
+
+			}
+
+			this.dragging = true;
+			_mouseDownEvent.mode = this.mode;
+			this.dispatchEvent( _mouseDownEvent );
+
+		}
+
+	}
+
+	pointerMove( pointer ) {
+
+		const axis = this.axis;
+		const mode = this.mode;
+		const object = this.object;
+		let space = this.space;
+
+		if ( mode === 'scale' ) {
+
+			space = 'local';
+
+		} else if ( axis === 'E' || axis === 'XYZE' || axis === 'XYZ' ) {
+
+			space = 'world';
+
+		}
+
+		if ( object === undefined || axis === null || this.dragging === false || pointer.button !== - 1 ) return;
+
+		_raycaster$1.setFromCamera( pointer, this.camera );
+
+		const planeIntersect = intersectObjectWithRay( this._plane, _raycaster$1, true );
+
+		if ( ! planeIntersect ) return;
+
+		this.pointEnd.copy( planeIntersect.point ).sub( this.worldPositionStart );
+
+		if ( mode === 'translate' ) {
+
+			// Apply translate
+
+			this._offset.copy( this.pointEnd ).sub( this.pointStart );
+
+			if ( space === 'local' && axis !== 'XYZ' ) {
+
+				this._offset.applyQuaternion( this._worldQuaternionInv );
+
+			}
+
+			if ( axis.indexOf( 'X' ) === - 1 ) this._offset.x = 0;
+			if ( axis.indexOf( 'Y' ) === - 1 ) this._offset.y = 0;
+			if ( axis.indexOf( 'Z' ) === - 1 ) this._offset.z = 0;
+
+			if ( space === 'local' && axis !== 'XYZ' ) {
+
+				this._offset.applyQuaternion( this._quaternionStart ).divide( this._parentScale );
+
+			} else {
+
+				this._offset.applyQuaternion( this._parentQuaternionInv ).divide( this._parentScale );
+
+			}
+
+			object.position.copy( this._offset ).add( this._positionStart );
+
+			// Apply translation snap
+
+			if ( this.translationSnap ) {
+
+				if ( space === 'local' ) {
+
+					object.position.applyQuaternion( _tempQuaternion.copy( this._quaternionStart ).invert() );
+
+					if ( axis.search( 'X' ) !== - 1 ) {
+
+						object.position.x = Math.round( object.position.x / this.translationSnap ) * this.translationSnap;
+
+					}
+
+					if ( axis.search( 'Y' ) !== - 1 ) {
+
+						object.position.y = Math.round( object.position.y / this.translationSnap ) * this.translationSnap;
+
+					}
+
+					if ( axis.search( 'Z' ) !== - 1 ) {
+
+						object.position.z = Math.round( object.position.z / this.translationSnap ) * this.translationSnap;
+
+					}
+
+					object.position.applyQuaternion( this._quaternionStart );
+
+				}
+
+				if ( space === 'world' ) {
+
+					if ( object.parent ) {
+
+						object.position.add( _tempVector.setFromMatrixPosition( object.parent.matrixWorld ) );
+
+					}
+
+					if ( axis.search( 'X' ) !== - 1 ) {
+
+						object.position.x = Math.round( object.position.x / this.translationSnap ) * this.translationSnap;
+
+					}
+
+					if ( axis.search( 'Y' ) !== - 1 ) {
+
+						object.position.y = Math.round( object.position.y / this.translationSnap ) * this.translationSnap;
+
+					}
+
+					if ( axis.search( 'Z' ) !== - 1 ) {
+
+						object.position.z = Math.round( object.position.z / this.translationSnap ) * this.translationSnap;
+
+					}
+
+					if ( object.parent ) {
+
+						object.position.sub( _tempVector.setFromMatrixPosition( object.parent.matrixWorld ) );
+
+					}
+
+				}
+
+			}
+
+		} else if ( mode === 'scale' ) {
+
+			if ( axis.search( 'XYZ' ) !== - 1 ) {
+
+				let d = this.pointEnd.length() / this.pointStart.length();
+
+				if ( this.pointEnd.dot( this.pointStart ) < 0 ) d *= - 1;
+
+				_tempVector2.set( d, d, d );
+
+			} else {
+
+				_tempVector.copy( this.pointStart );
+				_tempVector2.copy( this.pointEnd );
+
+				_tempVector.applyQuaternion( this._worldQuaternionInv );
+				_tempVector2.applyQuaternion( this._worldQuaternionInv );
+
+				_tempVector2.divide( _tempVector );
+
+				if ( axis.search( 'X' ) === - 1 ) {
+
+					_tempVector2.x = 1;
+
+				}
+
+				if ( axis.search( 'Y' ) === - 1 ) {
+
+					_tempVector2.y = 1;
+
+				}
+
+				if ( axis.search( 'Z' ) === - 1 ) {
+
+					_tempVector2.z = 1;
+
+				}
+
+			}
+
+			// Apply scale
+
+			object.scale.copy( this._scaleStart ).multiply( _tempVector2 );
+
+			if ( this.scaleSnap ) {
+
+				if ( axis.search( 'X' ) !== - 1 ) {
+
+					object.scale.x = Math.round( object.scale.x / this.scaleSnap ) * this.scaleSnap || this.scaleSnap;
+
+				}
+
+				if ( axis.search( 'Y' ) !== - 1 ) {
+
+					object.scale.y = Math.round( object.scale.y / this.scaleSnap ) * this.scaleSnap || this.scaleSnap;
+
+				}
+
+				if ( axis.search( 'Z' ) !== - 1 ) {
+
+					object.scale.z = Math.round( object.scale.z / this.scaleSnap ) * this.scaleSnap || this.scaleSnap;
+
+				}
+
+			}
+
+		} else if ( mode === 'rotate' ) {
+
+			this._offset.copy( this.pointEnd ).sub( this.pointStart );
+
+			const ROTATION_SPEED = 20 / this.worldPosition.distanceTo( _tempVector.setFromMatrixPosition( this.camera.matrixWorld ) );
+
+			if ( axis === 'E' ) {
+
+				this.rotationAxis.copy( this.eye );
+				this.rotationAngle = this.pointEnd.angleTo( this.pointStart );
+
+				this._startNorm.copy( this.pointStart ).normalize();
+				this._endNorm.copy( this.pointEnd ).normalize();
+
+				this.rotationAngle *= ( this._endNorm.cross( this._startNorm ).dot( this.eye ) < 0 ? 1 : - 1 );
+
+			} else if ( axis === 'XYZE' ) {
+
+				this.rotationAxis.copy( this._offset ).cross( this.eye ).normalize();
+				this.rotationAngle = this._offset.dot( _tempVector.copy( this.rotationAxis ).cross( this.eye ) ) * ROTATION_SPEED;
+
+			} else if ( axis === 'X' || axis === 'Y' || axis === 'Z' ) {
+
+				this.rotationAxis.copy( _unit[ axis ] );
+
+				_tempVector.copy( _unit[ axis ] );
+
+				if ( space === 'local' ) {
+
+					_tempVector.applyQuaternion( this.worldQuaternion );
+
+				}
+
+				this.rotationAngle = this._offset.dot( _tempVector.cross( this.eye ).normalize() ) * ROTATION_SPEED;
+
+			}
+
+			// Apply rotation snap
+
+			if ( this.rotationSnap ) this.rotationAngle = Math.round( this.rotationAngle / this.rotationSnap ) * this.rotationSnap;
+
+			// Apply rotate
+			if ( space === 'local' && axis !== 'E' && axis !== 'XYZE' ) {
+
+				object.quaternion.copy( this._quaternionStart );
+				object.quaternion.multiply( _tempQuaternion.setFromAxisAngle( this.rotationAxis, this.rotationAngle ) ).normalize();
+
+			} else {
+
+				this.rotationAxis.applyQuaternion( this._parentQuaternionInv );
+				object.quaternion.copy( _tempQuaternion.setFromAxisAngle( this.rotationAxis, this.rotationAngle ) );
+				object.quaternion.multiply( this._quaternionStart ).normalize();
+
+			}
+
+		}
+
+		this.dispatchEvent( _changeEvent );
+		this.dispatchEvent( _objectChangeEvent );
+
+	}
+
+	pointerUp( pointer ) {
+
+		if ( pointer.button !== 0 ) return;
+
+		if ( this.dragging && ( this.axis !== null ) ) {
+
+			_mouseUpEvent.mode = this.mode;
+			this.dispatchEvent( _mouseUpEvent );
+
+		}
+
+		this.dragging = false;
+		this.axis = null;
+
+	}
+
+	dispose() {
+
+		this.domElement.removeEventListener( 'pointerdown', this._onPointerDown );
+		this.domElement.removeEventListener( 'pointermove', this._onPointerHover );
+		this.domElement.removeEventListener( 'pointermove', this._onPointerMove );
+		this.domElement.removeEventListener( 'pointerup', this._onPointerUp );
+
+		this.traverse( function ( child ) {
+
+			if ( child.geometry ) child.geometry.dispose();
+			if ( child.material ) child.material.dispose();
+
+		} );
+
+	}
+
+	// Set current object
+	attach( object ) {
+
+		this.object = object;
+		this.visible = true;
+
+		return this;
+
+	}
+
+	// Detatch from object
+	detach() {
+
+		this.object = undefined;
+		this.visible = false;
+		this.axis = null;
+
+		return this;
+
+	}
+
+	getRaycaster() {
+
+		return _raycaster$1;
+
+	}
+
+	// TODO: deprecate
+
+	getMode() {
+
+		return this.mode;
+
+	}
+
+	setMode( mode ) {
+
+		this.mode = mode;
+
+	}
+
+	setTranslationSnap( translationSnap ) {
+
+		this.translationSnap = translationSnap;
+
+	}
+
+	setRotationSnap( rotationSnap ) {
+
+		this.rotationSnap = rotationSnap;
+
+	}
+
+	setScaleSnap( scaleSnap ) {
+
+		this.scaleSnap = scaleSnap;
+
+	}
+
+	setSize( size ) {
+
+		this.size = size;
+
+	}
+
+	setSpace( space ) {
+
+		this.space = space;
+
+	}
+
+	update() {
+
+		console.warn( 'THREE.TransformControls: update function has no more functionality and therefore has been deprecated.' );
+
+	}
+
+}
+
+TransformControls.prototype.isTransformControls = true;
+
+// mouse / touch event handlers
+
+function getPointer( event ) {
+
+	if ( this.domElement.ownerDocument.pointerLockElement ) {
+
+		return {
+			x: 0,
+			y: 0,
+			button: event.button
+		};
+
+	} else {
+
+		const rect = this.domElement.getBoundingClientRect();
+
+		return {
+			x: ( event.clientX - rect.left ) / rect.width * 2 - 1,
+			y: - ( event.clientY - rect.top ) / rect.height * 2 + 1,
+			button: event.button
+		};
+
+	}
+
+}
+
+function onPointerHover( event ) {
+
+	if ( ! this.enabled ) return;
+
+	switch ( event.pointerType ) {
+
+		case 'mouse':
+		case 'pen':
+			this.pointerHover( this._getPointer( event ) );
+			break;
+
+	}
+
+}
+
+function onPointerDown( event ) {
+
+	if ( ! this.enabled ) return;
+
+	this.domElement.setPointerCapture( event.pointerId );
+
+	this.domElement.addEventListener( 'pointermove', this._onPointerMove );
+
+	this.pointerHover( this._getPointer( event ) );
+	this.pointerDown( this._getPointer( event ) );
+
+}
+
+function onPointerMove( event ) {
+
+	if ( ! this.enabled ) return;
+
+	this.pointerMove( this._getPointer( event ) );
+
+}
+
+function onPointerUp( event ) {
+
+	if ( ! this.enabled ) return;
+
+	this.domElement.releasePointerCapture( event.pointerId );
+
+	this.domElement.removeEventListener( 'pointermove', this._onPointerMove );
+
+	this.pointerUp( this._getPointer( event ) );
+
+}
+
+function intersectObjectWithRay( object, raycaster, includeInvisible ) {
+
+	const allIntersections = raycaster.intersectObject( object, true );
+
+	for ( let i = 0; i < allIntersections.length; i ++ ) {
+
+		if ( allIntersections[ i ].object.visible || includeInvisible ) {
+
+			return allIntersections[ i ];
+
+		}
+
+	}
+
+	return false;
+
+}
+
+//
+
+// Reusable utility variables
+
+const _tempEuler = new Euler();
+const _alignVector = new Vector3( 0, 1, 0 );
+const _zeroVector = new Vector3( 0, 0, 0 );
+const _lookAtMatrix = new Matrix4();
+const _tempQuaternion2 = new Quaternion();
+const _identityQuaternion = new Quaternion();
+const _dirVector = new Vector3();
+const _tempMatrix = new Matrix4();
+
+const _unitX = new Vector3( 1, 0, 0 );
+const _unitY = new Vector3( 0, 1, 0 );
+const _unitZ = new Vector3( 0, 0, 1 );
+
+const _v1 = new Vector3();
+const _v2$1 = new Vector3();
+const _v3 = new Vector3();
+
+class TransformControlsGizmo extends Object3D {
+
+	constructor() {
+
+		super();
+
+		this.type = 'TransformControlsGizmo';
+
+		// shared materials
+
+		const gizmoMaterial = new MeshBasicMaterial( {
+			depthTest: false,
+			depthWrite: false,
+			fog: false,
+			toneMapped: false,
+			transparent: true
+		} );
+
+		const gizmoLineMaterial = new LineBasicMaterial( {
+			depthTest: false,
+			depthWrite: false,
+			fog: false,
+			toneMapped: false,
+			transparent: true
+		} );
+
+		// Make unique material for each axis/color
+
+		const matInvisible = gizmoMaterial.clone();
+		matInvisible.opacity = 0.15;
+
+		const matHelper = gizmoLineMaterial.clone();
+		matHelper.opacity = 0.5;
+
+		const matRed = gizmoMaterial.clone();
+		matRed.color.setHex( 0xff0000 );
+
+		const matGreen = gizmoMaterial.clone();
+		matGreen.color.setHex( 0x00ff00 );
+
+		const matBlue = gizmoMaterial.clone();
+		matBlue.color.setHex( 0x0000ff );
+
+		const matRedTransparent = gizmoMaterial.clone();
+		matRedTransparent.color.setHex( 0xff0000 );
+		matRedTransparent.opacity = 0.5;
+
+		const matGreenTransparent = gizmoMaterial.clone();
+		matGreenTransparent.color.setHex( 0x00ff00 );
+		matGreenTransparent.opacity = 0.5;
+
+		const matBlueTransparent = gizmoMaterial.clone();
+		matBlueTransparent.color.setHex( 0x0000ff );
+		matBlueTransparent.opacity = 0.5;
+
+		const matWhiteTransparent = gizmoMaterial.clone();
+		matWhiteTransparent.opacity = 0.25;
+
+		const matYellowTransparent = gizmoMaterial.clone();
+		matYellowTransparent.color.setHex( 0xffff00 );
+		matYellowTransparent.opacity = 0.25;
+
+		const matYellow = gizmoMaterial.clone();
+		matYellow.color.setHex( 0xffff00 );
+
+		const matGray = gizmoMaterial.clone();
+		matGray.color.setHex( 0x787878 );
+
+		// reusable geometry
+
+		const arrowGeometry = new CylinderGeometry( 0, 0.04, 0.1, 12 );
+		arrowGeometry.translate( 0, 0.05, 0 );
+
+		const scaleHandleGeometry = new BoxGeometry( 0.08, 0.08, 0.08 );
+		scaleHandleGeometry.translate( 0, 0.04, 0 );
+
+		const lineGeometry = new BufferGeometry();
+		lineGeometry.setAttribute( 'position', new Float32BufferAttribute( [ 0, 0, 0,	1, 0, 0 ], 3 ) );
+
+		const lineGeometry2 = new CylinderGeometry( 0.0075, 0.0075, 0.5, 3 );
+		lineGeometry2.translate( 0, 0.25, 0 );
+
+		function CircleGeometry( radius, arc ) {
+
+			const geometry = new TorusGeometry( radius, 0.0075, 3, 64, arc * Math.PI * 2 );
+			geometry.rotateY( Math.PI / 2 );
+			geometry.rotateX( Math.PI / 2 );
+			return geometry;
+
+		}
+
+		// Special geometry for transform helper. If scaled with position vector it spans from [0,0,0] to position
+
+		function TranslateHelperGeometry() {
+
+			const geometry = new BufferGeometry();
+
+			geometry.setAttribute( 'position', new Float32BufferAttribute( [ 0, 0, 0, 1, 1, 1 ], 3 ) );
+
+			return geometry;
+
+		}
+
+		// Gizmo definitions - custom hierarchy definitions for setupGizmo() function
+
+		const gizmoTranslate = {
+			X: [
+				[ new Mesh( arrowGeometry, matRed ), [ 0.5, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
+				[ new Mesh( arrowGeometry, matRed ), [ - 0.5, 0, 0 ], [ 0, 0, Math.PI / 2 ]],
+				[ new Mesh( lineGeometry2, matRed ), [ 0, 0, 0 ], [ 0, 0, - Math.PI / 2 ]]
+			],
+			Y: [
+				[ new Mesh( arrowGeometry, matGreen ), [ 0, 0.5, 0 ]],
+				[ new Mesh( arrowGeometry, matGreen ), [ 0, - 0.5, 0 ], [ Math.PI, 0, 0 ]],
+				[ new Mesh( lineGeometry2, matGreen ) ]
+			],
+			Z: [
+				[ new Mesh( arrowGeometry, matBlue ), [ 0, 0, 0.5 ], [ Math.PI / 2, 0, 0 ]],
+				[ new Mesh( arrowGeometry, matBlue ), [ 0, 0, - 0.5 ], [ - Math.PI / 2, 0, 0 ]],
+				[ new Mesh( lineGeometry2, matBlue ), null, [ Math.PI / 2, 0, 0 ]]
+			],
+			XYZ: [
+				[ new Mesh( new OctahedronGeometry( 0.1, 0 ), matWhiteTransparent.clone() ), [ 0, 0, 0 ]]
+			],
+			XY: [
+				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matBlueTransparent.clone() ), [ 0.15, 0.15, 0 ]]
+			],
+			YZ: [
+				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matRedTransparent.clone() ), [ 0, 0.15, 0.15 ], [ 0, Math.PI / 2, 0 ]]
+			],
+			XZ: [
+				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matGreenTransparent.clone() ), [ 0.15, 0, 0.15 ], [ - Math.PI / 2, 0, 0 ]]
+			]
+		};
+
+		const pickerTranslate = {
+			X: [
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0.3, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ - 0.3, 0, 0 ], [ 0, 0, Math.PI / 2 ]]
+			],
+			Y: [
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0.3, 0 ]],
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, - 0.3, 0 ], [ 0, 0, Math.PI ]]
+			],
+			Z: [
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0, 0.3 ], [ Math.PI / 2, 0, 0 ]],
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0, - 0.3 ], [ - Math.PI / 2, 0, 0 ]]
+			],
+			XYZ: [
+				[ new Mesh( new OctahedronGeometry( 0.2, 0 ), matInvisible ) ]
+			],
+			XY: [
+				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0.15, 0.15, 0 ]]
+			],
+			YZ: [
+				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0, 0.15, 0.15 ], [ 0, Math.PI / 2, 0 ]]
+			],
+			XZ: [
+				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0.15, 0, 0.15 ], [ - Math.PI / 2, 0, 0 ]]
+			]
+		};
+
+		const helperTranslate = {
+			START: [
+				[ new Mesh( new OctahedronGeometry( 0.01, 2 ), matHelper ), null, null, null, 'helper' ]
+			],
+			END: [
+				[ new Mesh( new OctahedronGeometry( 0.01, 2 ), matHelper ), null, null, null, 'helper' ]
+			],
+			DELTA: [
+				[ new Line( TranslateHelperGeometry(), matHelper ), null, null, null, 'helper' ]
+			],
+			X: [
+				[ new Line( lineGeometry, matHelper.clone() ), [ - 1e3, 0, 0 ], null, [ 1e6, 1, 1 ], 'helper' ]
+			],
+			Y: [
+				[ new Line( lineGeometry, matHelper.clone() ), [ 0, - 1e3, 0 ], [ 0, 0, Math.PI / 2 ], [ 1e6, 1, 1 ], 'helper' ]
+			],
+			Z: [
+				[ new Line( lineGeometry, matHelper.clone() ), [ 0, 0, - 1e3 ], [ 0, - Math.PI / 2, 0 ], [ 1e6, 1, 1 ], 'helper' ]
+			]
+		};
+
+		const gizmoRotate = {
+			XYZE: [
+				[ new Mesh( CircleGeometry( 0.5, 1 ), matGray ), null, [ 0, Math.PI / 2, 0 ]]
+			],
+			X: [
+				[ new Mesh( CircleGeometry( 0.5, 0.5 ), matRed ) ]
+			],
+			Y: [
+				[ new Mesh( CircleGeometry( 0.5, 0.5 ), matGreen ), null, [ 0, 0, - Math.PI / 2 ]]
+			],
+			Z: [
+				[ new Mesh( CircleGeometry( 0.5, 0.5 ), matBlue ), null, [ 0, Math.PI / 2, 0 ]]
+			],
+			E: [
+				[ new Mesh( CircleGeometry( 0.75, 1 ), matYellowTransparent ), null, [ 0, Math.PI / 2, 0 ]]
+			]
+		};
+
+		const helperRotate = {
+			AXIS: [
+				[ new Line( lineGeometry, matHelper.clone() ), [ - 1e3, 0, 0 ], null, [ 1e6, 1, 1 ], 'helper' ]
+			]
+		};
+
+		const pickerRotate = {
+			XYZE: [
+				[ new Mesh( new SphereGeometry( 0.25, 10, 8 ), matInvisible ) ]
+			],
+			X: [
+				[ new Mesh( new TorusGeometry( 0.5, 0.1, 4, 24 ), matInvisible ), [ 0, 0, 0 ], [ 0, - Math.PI / 2, - Math.PI / 2 ]],
+			],
+			Y: [
+				[ new Mesh( new TorusGeometry( 0.5, 0.1, 4, 24 ), matInvisible ), [ 0, 0, 0 ], [ Math.PI / 2, 0, 0 ]],
+			],
+			Z: [
+				[ new Mesh( new TorusGeometry( 0.5, 0.1, 4, 24 ), matInvisible ), [ 0, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
+			],
+			E: [
+				[ new Mesh( new TorusGeometry( 0.75, 0.1, 2, 24 ), matInvisible ) ]
+			]
+		};
+
+		const gizmoScale = {
+			X: [
+				[ new Mesh( scaleHandleGeometry, matRed ), [ 0.5, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
+				[ new Mesh( lineGeometry2, matRed ), [ 0, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
+				[ new Mesh( scaleHandleGeometry, matRed ), [ - 0.5, 0, 0 ], [ 0, 0, Math.PI / 2 ]],
+			],
+			Y: [
+				[ new Mesh( scaleHandleGeometry, matGreen ), [ 0, 0.5, 0 ]],
+				[ new Mesh( lineGeometry2, matGreen ) ],
+				[ new Mesh( scaleHandleGeometry, matGreen ), [ 0, - 0.5, 0 ], [ 0, 0, Math.PI ]],
+			],
+			Z: [
+				[ new Mesh( scaleHandleGeometry, matBlue ), [ 0, 0, 0.5 ], [ Math.PI / 2, 0, 0 ]],
+				[ new Mesh( lineGeometry2, matBlue ), [ 0, 0, 0 ], [ Math.PI / 2, 0, 0 ]],
+				[ new Mesh( scaleHandleGeometry, matBlue ), [ 0, 0, - 0.5 ], [ - Math.PI / 2, 0, 0 ]]
+			],
+			XY: [
+				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matBlueTransparent ), [ 0.15, 0.15, 0 ]]
+			],
+			YZ: [
+				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matRedTransparent ), [ 0, 0.15, 0.15 ], [ 0, Math.PI / 2, 0 ]]
+			],
+			XZ: [
+				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matGreenTransparent ), [ 0.15, 0, 0.15 ], [ - Math.PI / 2, 0, 0 ]]
+			],
+			XYZ: [
+				[ new Mesh( new BoxGeometry( 0.1, 0.1, 0.1 ), matWhiteTransparent.clone() ) ],
+			]
+		};
+
+		const pickerScale = {
+			X: [
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0.3, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ - 0.3, 0, 0 ], [ 0, 0, Math.PI / 2 ]]
+			],
+			Y: [
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0.3, 0 ]],
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, - 0.3, 0 ], [ 0, 0, Math.PI ]]
+			],
+			Z: [
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0, 0.3 ], [ Math.PI / 2, 0, 0 ]],
+				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0, - 0.3 ], [ - Math.PI / 2, 0, 0 ]]
+			],
+			XY: [
+				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0.15, 0.15, 0 ]],
+			],
+			YZ: [
+				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0, 0.15, 0.15 ], [ 0, Math.PI / 2, 0 ]],
+			],
+			XZ: [
+				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0.15, 0, 0.15 ], [ - Math.PI / 2, 0, 0 ]],
+			],
+			XYZ: [
+				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.2 ), matInvisible ), [ 0, 0, 0 ]],
+			]
+		};
+
+		const helperScale = {
+			X: [
+				[ new Line( lineGeometry, matHelper.clone() ), [ - 1e3, 0, 0 ], null, [ 1e6, 1, 1 ], 'helper' ]
+			],
+			Y: [
+				[ new Line( lineGeometry, matHelper.clone() ), [ 0, - 1e3, 0 ], [ 0, 0, Math.PI / 2 ], [ 1e6, 1, 1 ], 'helper' ]
+			],
+			Z: [
+				[ new Line( lineGeometry, matHelper.clone() ), [ 0, 0, - 1e3 ], [ 0, - Math.PI / 2, 0 ], [ 1e6, 1, 1 ], 'helper' ]
+			]
+		};
+
+		// Creates an Object3D with gizmos described in custom hierarchy definition.
+
+		function setupGizmo( gizmoMap ) {
+
+			const gizmo = new Object3D();
+
+			for ( const name in gizmoMap ) {
+
+				for ( let i = gizmoMap[ name ].length; i --; ) {
+
+					const object = gizmoMap[ name ][ i ][ 0 ].clone();
+					const position = gizmoMap[ name ][ i ][ 1 ];
+					const rotation = gizmoMap[ name ][ i ][ 2 ];
+					const scale = gizmoMap[ name ][ i ][ 3 ];
+					const tag = gizmoMap[ name ][ i ][ 4 ];
+
+					// name and tag properties are essential for picking and updating logic.
+					object.name = name;
+					object.tag = tag;
+
+					if ( position ) {
+
+						object.position.set( position[ 0 ], position[ 1 ], position[ 2 ] );
+
+					}
+
+					if ( rotation ) {
+
+						object.rotation.set( rotation[ 0 ], rotation[ 1 ], rotation[ 2 ] );
+
+					}
+
+					if ( scale ) {
+
+						object.scale.set( scale[ 0 ], scale[ 1 ], scale[ 2 ] );
+
+					}
+
+					object.updateMatrix();
+
+					const tempGeometry = object.geometry.clone();
+					tempGeometry.applyMatrix4( object.matrix );
+					object.geometry = tempGeometry;
+					object.renderOrder = Infinity;
+
+					object.position.set( 0, 0, 0 );
+					object.rotation.set( 0, 0, 0 );
+					object.scale.set( 1, 1, 1 );
+
+					gizmo.add( object );
+
+				}
+
+			}
+
+			return gizmo;
+
+		}
+
+		// Gizmo creation
+
+		this.gizmo = {};
+		this.picker = {};
+		this.helper = {};
+
+		this.add( this.gizmo[ 'translate' ] = setupGizmo( gizmoTranslate ) );
+		this.add( this.gizmo[ 'rotate' ] = setupGizmo( gizmoRotate ) );
+		this.add( this.gizmo[ 'scale' ] = setupGizmo( gizmoScale ) );
+		this.add( this.picker[ 'translate' ] = setupGizmo( pickerTranslate ) );
+		this.add( this.picker[ 'rotate' ] = setupGizmo( pickerRotate ) );
+		this.add( this.picker[ 'scale' ] = setupGizmo( pickerScale ) );
+		this.add( this.helper[ 'translate' ] = setupGizmo( helperTranslate ) );
+		this.add( this.helper[ 'rotate' ] = setupGizmo( helperRotate ) );
+		this.add( this.helper[ 'scale' ] = setupGizmo( helperScale ) );
+
+		// Pickers should be hidden always
+
+		this.picker[ 'translate' ].visible = false;
+		this.picker[ 'rotate' ].visible = false;
+		this.picker[ 'scale' ].visible = false;
+
+	}
+
+	// updateMatrixWorld will update transformations and appearance of individual handles
+
+	updateMatrixWorld( force ) {
+
+		const space = ( this.mode === 'scale' ) ? 'local' : this.space; // scale always oriented to local rotation
+
+		const quaternion = ( space === 'local' ) ? this.worldQuaternion : _identityQuaternion;
+
+		// Show only gizmos for current transform mode
+
+		this.gizmo[ 'translate' ].visible = this.mode === 'translate';
+		this.gizmo[ 'rotate' ].visible = this.mode === 'rotate';
+		this.gizmo[ 'scale' ].visible = this.mode === 'scale';
+
+		this.helper[ 'translate' ].visible = this.mode === 'translate';
+		this.helper[ 'rotate' ].visible = this.mode === 'rotate';
+		this.helper[ 'scale' ].visible = this.mode === 'scale';
+
+
+		let handles = [];
+		handles = handles.concat( this.picker[ this.mode ].children );
+		handles = handles.concat( this.gizmo[ this.mode ].children );
+		handles = handles.concat( this.helper[ this.mode ].children );
+
+		for ( let i = 0; i < handles.length; i ++ ) {
+
+			const handle = handles[ i ];
+
+			// hide aligned to camera
+
+			handle.visible = true;
+			handle.rotation.set( 0, 0, 0 );
+			handle.position.copy( this.worldPosition );
+
+			let factor;
+
+			if ( this.camera.isOrthographicCamera ) {
+
+				factor = ( this.camera.top - this.camera.bottom ) / this.camera.zoom;
+
+			} else {
+
+				factor = this.worldPosition.distanceTo( this.cameraPosition ) * Math.min( 1.9 * Math.tan( Math.PI * this.camera.fov / 360 ) / this.camera.zoom, 7 );
+
+			}
+
+			handle.scale.set( 1, 1, 1 ).multiplyScalar( factor * this.size / 4 );
+
+			// TODO: simplify helpers and consider decoupling from gizmo
+
+			if ( handle.tag === 'helper' ) {
+
+				handle.visible = false;
+
+				if ( handle.name === 'AXIS' ) {
+
+					handle.position.copy( this.worldPositionStart );
+					handle.visible = !! this.axis;
+
+					if ( this.axis === 'X' ) {
+
+						_tempQuaternion.setFromEuler( _tempEuler.set( 0, 0, 0 ) );
+						handle.quaternion.copy( quaternion ).multiply( _tempQuaternion );
+
+						if ( Math.abs( _alignVector.copy( _unitX ).applyQuaternion( quaternion ).dot( this.eye ) ) > 0.9 ) {
+
+							handle.visible = false;
+
+						}
+
+					}
+
+					if ( this.axis === 'Y' ) {
+
+						_tempQuaternion.setFromEuler( _tempEuler.set( 0, 0, Math.PI / 2 ) );
+						handle.quaternion.copy( quaternion ).multiply( _tempQuaternion );
+
+						if ( Math.abs( _alignVector.copy( _unitY ).applyQuaternion( quaternion ).dot( this.eye ) ) > 0.9 ) {
+
+							handle.visible = false;
+
+						}
+
+					}
+
+					if ( this.axis === 'Z' ) {
+
+						_tempQuaternion.setFromEuler( _tempEuler.set( 0, Math.PI / 2, 0 ) );
+						handle.quaternion.copy( quaternion ).multiply( _tempQuaternion );
+
+						if ( Math.abs( _alignVector.copy( _unitZ ).applyQuaternion( quaternion ).dot( this.eye ) ) > 0.9 ) {
+
+							handle.visible = false;
+
+						}
+
+					}
+
+					if ( this.axis === 'XYZE' ) {
+
+						_tempQuaternion.setFromEuler( _tempEuler.set( 0, Math.PI / 2, 0 ) );
+						_alignVector.copy( this.rotationAxis );
+						handle.quaternion.setFromRotationMatrix( _lookAtMatrix.lookAt( _zeroVector, _alignVector, _unitY ) );
+						handle.quaternion.multiply( _tempQuaternion );
+						handle.visible = this.dragging;
+
+					}
+
+					if ( this.axis === 'E' ) {
+
+						handle.visible = false;
+
+					}
+
+
+				} else if ( handle.name === 'START' ) {
+
+					handle.position.copy( this.worldPositionStart );
+					handle.visible = this.dragging;
+
+				} else if ( handle.name === 'END' ) {
+
+					handle.position.copy( this.worldPosition );
+					handle.visible = this.dragging;
+
+				} else if ( handle.name === 'DELTA' ) {
+
+					handle.position.copy( this.worldPositionStart );
+					handle.quaternion.copy( this.worldQuaternionStart );
+					_tempVector.set( 1e-10, 1e-10, 1e-10 ).add( this.worldPositionStart ).sub( this.worldPosition ).multiplyScalar( - 1 );
+					_tempVector.applyQuaternion( this.worldQuaternionStart.clone().invert() );
+					handle.scale.copy( _tempVector );
+					handle.visible = this.dragging;
+
+				} else {
+
+					handle.quaternion.copy( quaternion );
+
+					if ( this.dragging ) {
+
+						handle.position.copy( this.worldPositionStart );
+
+					} else {
+
+						handle.position.copy( this.worldPosition );
+
+					}
+
+					if ( this.axis ) {
+
+						handle.visible = this.axis.search( handle.name ) !== - 1;
+
+					}
+
+				}
+
+				// If updating helper, skip rest of the loop
+				continue;
+
+			}
+
+			// Align handles to current local or world rotation
+
+			handle.quaternion.copy( quaternion );
+
+			if ( this.mode === 'translate' || this.mode === 'scale' ) {
+
+				// Hide translate and scale axis facing the camera
+
+				const AXIS_HIDE_TRESHOLD = 0.99;
+				const PLANE_HIDE_TRESHOLD = 0.2;
+
+				if ( handle.name === 'X' ) {
+
+					if ( Math.abs( _alignVector.copy( _unitX ).applyQuaternion( quaternion ).dot( this.eye ) ) > AXIS_HIDE_TRESHOLD ) {
+
+						handle.scale.set( 1e-10, 1e-10, 1e-10 );
+						handle.visible = false;
+
+					}
+
+				}
+
+				if ( handle.name === 'Y' ) {
+
+					if ( Math.abs( _alignVector.copy( _unitY ).applyQuaternion( quaternion ).dot( this.eye ) ) > AXIS_HIDE_TRESHOLD ) {
+
+						handle.scale.set( 1e-10, 1e-10, 1e-10 );
+						handle.visible = false;
+
+					}
+
+				}
+
+				if ( handle.name === 'Z' ) {
+
+					if ( Math.abs( _alignVector.copy( _unitZ ).applyQuaternion( quaternion ).dot( this.eye ) ) > AXIS_HIDE_TRESHOLD ) {
+
+						handle.scale.set( 1e-10, 1e-10, 1e-10 );
+						handle.visible = false;
+
+					}
+
+				}
+
+				if ( handle.name === 'XY' ) {
+
+					if ( Math.abs( _alignVector.copy( _unitZ ).applyQuaternion( quaternion ).dot( this.eye ) ) < PLANE_HIDE_TRESHOLD ) {
+
+						handle.scale.set( 1e-10, 1e-10, 1e-10 );
+						handle.visible = false;
+
+					}
+
+				}
+
+				if ( handle.name === 'YZ' ) {
+
+					if ( Math.abs( _alignVector.copy( _unitX ).applyQuaternion( quaternion ).dot( this.eye ) ) < PLANE_HIDE_TRESHOLD ) {
+
+						handle.scale.set( 1e-10, 1e-10, 1e-10 );
+						handle.visible = false;
+
+					}
+
+				}
+
+				if ( handle.name === 'XZ' ) {
+
+					if ( Math.abs( _alignVector.copy( _unitY ).applyQuaternion( quaternion ).dot( this.eye ) ) < PLANE_HIDE_TRESHOLD ) {
+
+						handle.scale.set( 1e-10, 1e-10, 1e-10 );
+						handle.visible = false;
+
+					}
+
+				}
+
+			} else if ( this.mode === 'rotate' ) {
+
+				// Align handles to current local or world rotation
+
+				_tempQuaternion2.copy( quaternion );
+				_alignVector.copy( this.eye ).applyQuaternion( _tempQuaternion.copy( quaternion ).invert() );
+
+				if ( handle.name.search( 'E' ) !== - 1 ) {
+
+					handle.quaternion.setFromRotationMatrix( _lookAtMatrix.lookAt( this.eye, _zeroVector, _unitY ) );
+
+				}
+
+				if ( handle.name === 'X' ) {
+
+					_tempQuaternion.setFromAxisAngle( _unitX, Math.atan2( - _alignVector.y, _alignVector.z ) );
+					_tempQuaternion.multiplyQuaternions( _tempQuaternion2, _tempQuaternion );
+					handle.quaternion.copy( _tempQuaternion );
+
+				}
+
+				if ( handle.name === 'Y' ) {
+
+					_tempQuaternion.setFromAxisAngle( _unitY, Math.atan2( _alignVector.x, _alignVector.z ) );
+					_tempQuaternion.multiplyQuaternions( _tempQuaternion2, _tempQuaternion );
+					handle.quaternion.copy( _tempQuaternion );
+
+				}
+
+				if ( handle.name === 'Z' ) {
+
+					_tempQuaternion.setFromAxisAngle( _unitZ, Math.atan2( _alignVector.y, _alignVector.x ) );
+					_tempQuaternion.multiplyQuaternions( _tempQuaternion2, _tempQuaternion );
+					handle.quaternion.copy( _tempQuaternion );
+
+				}
+
+			}
+
+			// Hide disabled axes
+			handle.visible = handle.visible && ( handle.name.indexOf( 'X' ) === - 1 || this.showX );
+			handle.visible = handle.visible && ( handle.name.indexOf( 'Y' ) === - 1 || this.showY );
+			handle.visible = handle.visible && ( handle.name.indexOf( 'Z' ) === - 1 || this.showZ );
+			handle.visible = handle.visible && ( handle.name.indexOf( 'E' ) === - 1 || ( this.showX && this.showY && this.showZ ) );
+
+			// highlight selected axis
+
+			handle.material._color = handle.material._color || handle.material.color.clone();
+			handle.material._opacity = handle.material._opacity || handle.material.opacity;
+
+			handle.material.color.copy( handle.material._color );
+			handle.material.opacity = handle.material._opacity;
+
+			if ( this.enabled && this.axis ) {
+
+				if ( handle.name === this.axis ) {
+
+					handle.material.color.setHex( 0xffff00 );
+					handle.material.opacity = 1.0;
+
+				} else if ( this.axis.split( '' ).some( function ( a ) {
+
+					return handle.name === a;
+
+				} ) ) {
+
+					handle.material.color.setHex( 0xffff00 );
+					handle.material.opacity = 1.0;
+
+				}
+
+			}
+
+		}
+
+		super.updateMatrixWorld( force );
+
+	}
+
+}
+
+TransformControlsGizmo.prototype.isTransformControlsGizmo = true;
+
+//
+
+class TransformControlsPlane extends Mesh {
+
+	constructor() {
+
+		super(
+			new PlaneGeometry( 100000, 100000, 2, 2 ),
+			new MeshBasicMaterial( { visible: false, wireframe: true, side: DoubleSide, transparent: true, opacity: 0.1, toneMapped: false } )
+		);
+
+		this.type = 'TransformControlsPlane';
+
+	}
+
+	updateMatrixWorld( force ) {
+
+		let space = this.space;
+
+		this.position.copy( this.worldPosition );
+
+		if ( this.mode === 'scale' ) space = 'local'; // scale always oriented to local rotation
+
+		_v1.copy( _unitX ).applyQuaternion( space === 'local' ? this.worldQuaternion : _identityQuaternion );
+		_v2$1.copy( _unitY ).applyQuaternion( space === 'local' ? this.worldQuaternion : _identityQuaternion );
+		_v3.copy( _unitZ ).applyQuaternion( space === 'local' ? this.worldQuaternion : _identityQuaternion );
+
+		// Align the plane for current transform mode, axis and space.
+
+		_alignVector.copy( _v2$1 );
+
+		switch ( this.mode ) {
+
+			case 'translate':
+			case 'scale':
+				switch ( this.axis ) {
+
+					case 'X':
+						_alignVector.copy( this.eye ).cross( _v1 );
+						_dirVector.copy( _v1 ).cross( _alignVector );
+						break;
+					case 'Y':
+						_alignVector.copy( this.eye ).cross( _v2$1 );
+						_dirVector.copy( _v2$1 ).cross( _alignVector );
+						break;
+					case 'Z':
+						_alignVector.copy( this.eye ).cross( _v3 );
+						_dirVector.copy( _v3 ).cross( _alignVector );
+						break;
+					case 'XY':
+						_dirVector.copy( _v3 );
+						break;
+					case 'YZ':
+						_dirVector.copy( _v1 );
+						break;
+					case 'XZ':
+						_alignVector.copy( _v3 );
+						_dirVector.copy( _v2$1 );
+						break;
+					case 'XYZ':
+					case 'E':
+						_dirVector.set( 0, 0, 0 );
+						break;
+
+				}
+
+				break;
+			case 'rotate':
+			default:
+				// special case for rotate
+				_dirVector.set( 0, 0, 0 );
+
+		}
+
+		if ( _dirVector.length() === 0 ) {
+
+			// If in rotate mode, make the plane parallel to camera
+			this.quaternion.copy( this.cameraQuaternion );
+
+		} else {
+
+			_tempMatrix.lookAt( _tempVector.set( 0, 0, 0 ), _dirVector, _alignVector );
+
+			this.quaternion.setFromRotationMatrix( _tempMatrix );
+
+		}
+
+		super.updateMatrixWorld( force );
+
+	}
+
+}
+
+TransformControlsPlane.prototype.isTransformControlsPlane = true;
+
+const _box$1 = new Box3();
+const _vector$1 = new Vector3();
+
+class LineSegmentsGeometry extends InstancedBufferGeometry {
+
+	constructor() {
+
+		super();
+
+		this.type = 'LineSegmentsGeometry';
+
+		const positions = [ - 1, 2, 0, 1, 2, 0, - 1, 1, 0, 1, 1, 0, - 1, 0, 0, 1, 0, 0, - 1, - 1, 0, 1, - 1, 0 ];
+		const uvs = [ - 1, 2, 1, 2, - 1, 1, 1, 1, - 1, - 1, 1, - 1, - 1, - 2, 1, - 2 ];
+		const index = [ 0, 2, 1, 2, 3, 1, 2, 4, 3, 4, 5, 3, 4, 6, 5, 6, 7, 5 ];
+
+		this.setIndex( index );
+		this.setAttribute( 'position', new Float32BufferAttribute( positions, 3 ) );
+		this.setAttribute( 'uv', new Float32BufferAttribute( uvs, 2 ) );
+
+	}
+
+	applyMatrix4( matrix ) {
+
+		const start = this.attributes.instanceStart;
+		const end = this.attributes.instanceEnd;
+
+		if ( start !== undefined ) {
+
+			start.applyMatrix4( matrix );
+
+			end.applyMatrix4( matrix );
+
+			start.needsUpdate = true;
+
+		}
+
+		if ( this.boundingBox !== null ) {
+
+			this.computeBoundingBox();
+
+		}
+
+		if ( this.boundingSphere !== null ) {
+
+			this.computeBoundingSphere();
+
+		}
+
+		return this;
+
+	}
+
+	setPositions( array ) {
+
+		let lineSegments;
+
+		if ( array instanceof Float32Array ) {
+
+			lineSegments = array;
+
+		} else if ( Array.isArray( array ) ) {
+
+			lineSegments = new Float32Array( array );
+
+		}
+
+		const instanceBuffer = new InstancedInterleavedBuffer( lineSegments, 6, 1 ); // xyz, xyz
+
+		this.setAttribute( 'instanceStart', new InterleavedBufferAttribute( instanceBuffer, 3, 0 ) ); // xyz
+		this.setAttribute( 'instanceEnd', new InterleavedBufferAttribute( instanceBuffer, 3, 3 ) ); // xyz
+
+		//
+
+		this.computeBoundingBox();
+		this.computeBoundingSphere();
+
+		return this;
+
+	}
+
+	setColors( array ) {
+
+		let colors;
+
+		if ( array instanceof Float32Array ) {
+
+			colors = array;
+
+		} else if ( Array.isArray( array ) ) {
+
+			colors = new Float32Array( array );
+
+		}
+
+		const instanceColorBuffer = new InstancedInterleavedBuffer( colors, 6, 1 ); // rgb, rgb
+
+		this.setAttribute( 'instanceColorStart', new InterleavedBufferAttribute( instanceColorBuffer, 3, 0 ) ); // rgb
+		this.setAttribute( 'instanceColorEnd', new InterleavedBufferAttribute( instanceColorBuffer, 3, 3 ) ); // rgb
+
+		return this;
+
+	}
+
+	fromWireframeGeometry( geometry ) {
+
+		this.setPositions( geometry.attributes.position.array );
+
+		return this;
+
+	}
+
+	fromEdgesGeometry( geometry ) {
+
+		this.setPositions( geometry.attributes.position.array );
+
+		return this;
+
+	}
+
+	fromMesh( mesh ) {
+
+		this.fromWireframeGeometry( new WireframeGeometry( mesh.geometry ) );
+
+		// set colors, maybe
+
+		return this;
+
+	}
+
+	fromLineSegments( lineSegments ) {
+
+		const geometry = lineSegments.geometry;
+
+		if ( geometry.isGeometry ) {
+
+			console.error( 'THREE.LineSegmentsGeometry no longer supports Geometry. Use THREE.BufferGeometry instead.' );
+			return;
+
+		} else if ( geometry.isBufferGeometry ) {
+
+			this.setPositions( geometry.attributes.position.array ); // assumes non-indexed
+
+		}
+
+		// set colors, maybe
+
+		return this;
+
+	}
+
+	computeBoundingBox() {
+
+		if ( this.boundingBox === null ) {
+
+			this.boundingBox = new Box3();
+
+		}
+
+		const start = this.attributes.instanceStart;
+		const end = this.attributes.instanceEnd;
+
+		if ( start !== undefined && end !== undefined ) {
+
+			this.boundingBox.setFromBufferAttribute( start );
+
+			_box$1.setFromBufferAttribute( end );
+
+			this.boundingBox.union( _box$1 );
+
+		}
+
+	}
+
+	computeBoundingSphere() {
+
+		if ( this.boundingSphere === null ) {
+
+			this.boundingSphere = new Sphere();
+
+		}
+
+		if ( this.boundingBox === null ) {
+
+			this.computeBoundingBox();
+
+		}
+
+		const start = this.attributes.instanceStart;
+		const end = this.attributes.instanceEnd;
+
+		if ( start !== undefined && end !== undefined ) {
+
+			const center = this.boundingSphere.center;
+
+			this.boundingBox.getCenter( center );
+
+			let maxRadiusSq = 0;
+
+			for ( let i = 0, il = start.count; i < il; i ++ ) {
+
+				_vector$1.fromBufferAttribute( start, i );
+				maxRadiusSq = Math.max( maxRadiusSq, center.distanceToSquared( _vector$1 ) );
+
+				_vector$1.fromBufferAttribute( end, i );
+				maxRadiusSq = Math.max( maxRadiusSq, center.distanceToSquared( _vector$1 ) );
+
+			}
+
+			this.boundingSphere.radius = Math.sqrt( maxRadiusSq );
+
+			if ( isNaN( this.boundingSphere.radius ) ) {
+
+				console.error( 'THREE.LineSegmentsGeometry.computeBoundingSphere(): Computed radius is NaN. The instanced position data is likely to have NaN values.', this );
+
+			}
+
+		}
+
+	}
+
+	toJSON() {
+
+		// todo
+
+	}
+
+	applyMatrix( matrix ) {
+
+		console.warn( 'THREE.LineSegmentsGeometry: applyMatrix() has been renamed to applyMatrix4().' );
+
+		return this.applyMatrix4( matrix );
+
+	}
+
+}
+
+LineSegmentsGeometry.prototype.isLineSegmentsGeometry = true;
+
+/**
+ * parameters = {
+ *  color: <hex>,
+ *  linewidth: <float>,
+ *  dashed: <boolean>,
+ *  dashScale: <float>,
+ *  dashSize: <float>,
+ *  dashOffset: <float>,
+ *  gapSize: <float>,
+ *  resolution: <Vector2>, // to be set by renderer
+ * }
+ */
+
+
+UniformsLib.line = {
+
+	worldUnits: { value: 1 },
+	linewidth: { value: 1 },
+	resolution: { value: new Vector2( 1, 1 ) },
+	dashOffset: { value: 0 },
+	dashScale: { value: 1 },
+	dashSize: { value: 1 },
+	gapSize: { value: 1 } // todo FIX - maybe change to totalSize
+
+};
+
+ShaderLib[ 'line' ] = {
+
+	uniforms: UniformsUtils.merge( [
+		UniformsLib.common,
+		UniformsLib.fog,
+		UniformsLib.line
+	] ),
+
+	vertexShader:
+	/* glsl */`
+		#include <common>
+		#include <color_pars_vertex>
+		#include <fog_pars_vertex>
+		#include <logdepthbuf_pars_vertex>
+		#include <clipping_planes_pars_vertex>
+
+		uniform float linewidth;
+		uniform vec2 resolution;
+
+		attribute vec3 instanceStart;
+		attribute vec3 instanceEnd;
+
+		attribute vec3 instanceColorStart;
+		attribute vec3 instanceColorEnd;
+
+		#ifdef WORLD_UNITS
+
+			varying vec4 worldPos;
+			varying vec3 worldStart;
+			varying vec3 worldEnd;
+
+			#ifdef USE_DASH
+
+				varying vec2 vUv;
+
+			#endif
+
+		#else
+
+			varying vec2 vUv;
+
+		#endif
+
+		#ifdef USE_DASH
+
+			uniform float dashScale;
+			attribute float instanceDistanceStart;
+			attribute float instanceDistanceEnd;
+			varying float vLineDistance;
+
+		#endif
+
+		void trimSegment( const in vec4 start, inout vec4 end ) {
+
+			// trim end segment so it terminates between the camera plane and the near plane
+
+			// conservative estimate of the near plane
+			float a = projectionMatrix[ 2 ][ 2 ]; // 3nd entry in 3th column
+			float b = projectionMatrix[ 3 ][ 2 ]; // 3nd entry in 4th column
+			float nearEstimate = - 0.5 * b / a;
+
+			float alpha = ( nearEstimate - start.z ) / ( end.z - start.z );
+
+			end.xyz = mix( start.xyz, end.xyz, alpha );
+
+		}
+
+		void main() {
+
+			#ifdef USE_COLOR
+
+				vColor.xyz = ( position.y < 0.5 ) ? instanceColorStart : instanceColorEnd;
+
+			#endif
+
+			#ifdef USE_DASH
+
+				vLineDistance = ( position.y < 0.5 ) ? dashScale * instanceDistanceStart : dashScale * instanceDistanceEnd;
+				vUv = uv;
+
+			#endif
+
+			float aspect = resolution.x / resolution.y;
+
+			// camera space
+			vec4 start = modelViewMatrix * vec4( instanceStart, 1.0 );
+			vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );
+
+			#ifdef WORLD_UNITS
+
+				worldStart = start.xyz;
+				worldEnd = end.xyz;
+
+			#else
+
+				vUv = uv;
+
+			#endif
+
+			// special case for perspective projection, and segments that terminate either in, or behind, the camera plane
+			// clearly the gpu firmware has a way of addressing this issue when projecting into ndc space
+			// but we need to perform ndc-space calculations in the shader, so we must address this issue directly
+			// perhaps there is a more elegant solution -- WestLangley
+
+			bool perspective = ( projectionMatrix[ 2 ][ 3 ] == - 1.0 ); // 4th entry in the 3rd column
+
+			if ( perspective ) {
+
+				if ( start.z < 0.0 && end.z >= 0.0 ) {
+
+					trimSegment( start, end );
+
+				} else if ( end.z < 0.0 && start.z >= 0.0 ) {
+
+					trimSegment( end, start );
+
+				}
+
+			}
+
+			// clip space
+			vec4 clipStart = projectionMatrix * start;
+			vec4 clipEnd = projectionMatrix * end;
+
+			// ndc space
+			vec3 ndcStart = clipStart.xyz / clipStart.w;
+			vec3 ndcEnd = clipEnd.xyz / clipEnd.w;
+
+			// direction
+			vec2 dir = ndcEnd.xy - ndcStart.xy;
+
+			// account for clip-space aspect ratio
+			dir.x *= aspect;
+			dir = normalize( dir );
+
+			#ifdef WORLD_UNITS
+
+				// get the offset direction as perpendicular to the view vector
+				vec3 worldDir = normalize( end.xyz - start.xyz );
+				vec3 offset;
+				if ( position.y < 0.5 ) {
+
+					offset = normalize( cross( start.xyz, worldDir ) );
+
+				} else {
+
+					offset = normalize( cross( end.xyz, worldDir ) );
+
+				}
+
+				// sign flip
+				if ( position.x < 0.0 ) offset *= - 1.0;
+
+				float forwardOffset = dot( worldDir, vec3( 0.0, 0.0, 1.0 ) );
+
+				// don't extend the line if we're rendering dashes because we
+				// won't be rendering the endcaps
+				#ifndef USE_DASH
+
+					// extend the line bounds to encompass  endcaps
+					start.xyz += - worldDir * linewidth * 0.5;
+					end.xyz += worldDir * linewidth * 0.5;
+
+					// shift the position of the quad so it hugs the forward edge of the line
+					offset.xy -= dir * forwardOffset;
+					offset.z += 0.5;
+
+				#endif
+
+				// endcaps
+				if ( position.y > 1.0 || position.y < 0.0 ) {
+
+					offset.xy += dir * 2.0 * forwardOffset;
+
+				}
+
+				// adjust for linewidth
+				offset *= linewidth * 0.5;
+
+				// set the world position
+				worldPos = ( position.y < 0.5 ) ? start : end;
+				worldPos.xyz += offset;
+
+				// project the worldpos
+				vec4 clip = projectionMatrix * worldPos;
+
+				// shift the depth of the projected points so the line
+				// segements overlap neatly
+				vec3 clipPose = ( position.y < 0.5 ) ? ndcStart : ndcEnd;
+				clip.z = clipPose.z * clip.w;
+
+			#else
+
+				vec2 offset = vec2( dir.y, - dir.x );
+				// undo aspect ratio adjustment
+				dir.x /= aspect;
+				offset.x /= aspect;
+
+				// sign flip
+				if ( position.x < 0.0 ) offset *= - 1.0;
+
+				// endcaps
+				if ( position.y < 0.0 ) {
+
+					offset += - dir;
+
+				} else if ( position.y > 1.0 ) {
+
+					offset += dir;
+
+				}
+
+				// adjust for linewidth
+				offset *= linewidth;
+
+				// adjust for clip-space to screen-space conversion // maybe resolution should be based on viewport ...
+				offset /= resolution.y;
+
+				// select end
+				vec4 clip = ( position.y < 0.5 ) ? clipStart : clipEnd;
+
+				// back to clip space
+				offset *= clip.w;
+
+				clip.xy += offset;
+
+			#endif
+
+			gl_Position = clip;
+
+			vec4 mvPosition = ( position.y < 0.5 ) ? start : end; // this is an approximation
+
+			#include <logdepthbuf_vertex>
+			#include <clipping_planes_vertex>
+			#include <fog_vertex>
+
+		}
+		`,
+
+	fragmentShader:
+	/* glsl */`
+		uniform vec3 diffuse;
+		uniform float opacity;
+		uniform float linewidth;
+
+		#ifdef USE_DASH
+
+			uniform float dashOffset;
+			uniform float dashSize;
+			uniform float gapSize;
+
+		#endif
+
+		varying float vLineDistance;
+
+		#ifdef WORLD_UNITS
+
+			varying vec4 worldPos;
+			varying vec3 worldStart;
+			varying vec3 worldEnd;
+
+			#ifdef USE_DASH
+
+				varying vec2 vUv;
+
+			#endif
+
+		#else
+
+			varying vec2 vUv;
+
+		#endif
+
+		#include <common>
+		#include <color_pars_fragment>
+		#include <fog_pars_fragment>
+		#include <logdepthbuf_pars_fragment>
+		#include <clipping_planes_pars_fragment>
+
+		vec2 closestLineToLine(vec3 p1, vec3 p2, vec3 p3, vec3 p4) {
+
+			float mua;
+			float mub;
+
+			vec3 p13 = p1 - p3;
+			vec3 p43 = p4 - p3;
+
+			vec3 p21 = p2 - p1;
+
+			float d1343 = dot( p13, p43 );
+			float d4321 = dot( p43, p21 );
+			float d1321 = dot( p13, p21 );
+			float d4343 = dot( p43, p43 );
+			float d2121 = dot( p21, p21 );
+
+			float denom = d2121 * d4343 - d4321 * d4321;
+
+			float numer = d1343 * d4321 - d1321 * d4343;
+
+			mua = numer / denom;
+			mua = clamp( mua, 0.0, 1.0 );
+			mub = ( d1343 + d4321 * ( mua ) ) / d4343;
+			mub = clamp( mub, 0.0, 1.0 );
+
+			return vec2( mua, mub );
+
+		}
+
+		void main() {
+
+			#include <clipping_planes_fragment>
+
+			#ifdef USE_DASH
+
+				if ( vUv.y < - 1.0 || vUv.y > 1.0 ) discard; // discard endcaps
+
+				if ( mod( vLineDistance + dashOffset, dashSize + gapSize ) > dashSize ) discard; // todo - FIX
+
+			#endif
+
+			float alpha = opacity;
+
+			#ifdef WORLD_UNITS
+
+				// Find the closest points on the view ray and the line segment
+				vec3 rayEnd = normalize( worldPos.xyz ) * 1e5;
+				vec3 lineDir = worldEnd - worldStart;
+				vec2 params = closestLineToLine( worldStart, worldEnd, vec3( 0.0, 0.0, 0.0 ), rayEnd );
+
+				vec3 p1 = worldStart + lineDir * params.x;
+				vec3 p2 = rayEnd * params.y;
+				vec3 delta = p1 - p2;
+				float len = length( delta );
+				float norm = len / linewidth;
+
+				#ifndef USE_DASH
+
+					#ifdef USE_ALPHA_TO_COVERAGE
+
+						float dnorm = fwidth( norm );
+						alpha = 1.0 - smoothstep( 0.5 - dnorm, 0.5 + dnorm, norm );
+
+					#else
+
+						if ( norm > 0.5 ) {
+
+							discard;
+
+						}
+
+					#endif
+
+				#endif
+
+			#else
+
+				#ifdef USE_ALPHA_TO_COVERAGE
+
+					// artifacts appear on some hardware if a derivative is taken within a conditional
+					float a = vUv.x;
+					float b = ( vUv.y > 0.0 ) ? vUv.y - 1.0 : vUv.y + 1.0;
+					float len2 = a * a + b * b;
+					float dlen = fwidth( len2 );
+
+					if ( abs( vUv.y ) > 1.0 ) {
+
+						alpha = 1.0 - smoothstep( 1.0 - dlen, 1.0 + dlen, len2 );
+
+					}
+
+				#else
+
+					if ( abs( vUv.y ) > 1.0 ) {
+
+						float a = vUv.x;
+						float b = ( vUv.y > 0.0 ) ? vUv.y - 1.0 : vUv.y + 1.0;
+						float len2 = a * a + b * b;
+
+						if ( len2 > 1.0 ) discard;
+
+					}
+
+				#endif
+
+			#endif
+
+			vec4 diffuseColor = vec4( diffuse, alpha );
+
+			#include <logdepthbuf_fragment>
+			#include <color_fragment>
+
+			gl_FragColor = vec4( diffuseColor.rgb, alpha );
+
+			#include <tonemapping_fragment>
+			#include <encodings_fragment>
+			#include <fog_fragment>
+			#include <premultiplied_alpha_fragment>
+
+		}
+		`
+};
+
+class LineMaterial extends ShaderMaterial {
+
+	constructor( parameters ) {
+
+		super( {
+
+			type: 'LineMaterial',
+
+			uniforms: UniformsUtils.clone( ShaderLib[ 'line' ].uniforms ),
+
+			vertexShader: ShaderLib[ 'line' ].vertexShader,
+			fragmentShader: ShaderLib[ 'line' ].fragmentShader,
+
+			clipping: true // required for clipping support
+
+		} );
+
+		Object.defineProperties( this, {
+
+			color: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return this.uniforms.diffuse.value;
+
+				},
+
+				set: function ( value ) {
+
+					this.uniforms.diffuse.value = value;
+
+				}
+
+			},
+
+			worldUnits: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return 'WORLD_UNITS' in this.defines;
+
+				},
+
+				set: function ( value ) {
+
+					if ( value === true ) {
+
+						this.defines.WORLD_UNITS = '';
+
+					} else {
+
+						delete this.defines.WORLD_UNITS;
+
+					}
+
+				}
+
+			},
+
+			linewidth: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return this.uniforms.linewidth.value;
+
+				},
+
+				set: function ( value ) {
+
+					this.uniforms.linewidth.value = value;
+
+				}
+
+			},
+
+			dashed: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return Boolean( 'USE_DASH' in this.defines );
+
+				},
+
+				set( value ) {
+
+					if ( Boolean( value ) !== Boolean( 'USE_DASH' in this.defines ) ) {
+
+						this.needsUpdate = true;
+
+					}
+
+					if ( value === true ) {
+
+						this.defines.USE_DASH = '';
+
+					} else {
+
+						delete this.defines.USE_DASH;
+
+					}
+
+				}
+
+			},
+
+			dashScale: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return this.uniforms.dashScale.value;
+
+				},
+
+				set: function ( value ) {
+
+					this.uniforms.dashScale.value = value;
+
+				}
+
+			},
+
+			dashSize: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return this.uniforms.dashSize.value;
+
+				},
+
+				set: function ( value ) {
+
+					this.uniforms.dashSize.value = value;
+
+				}
+
+			},
+
+			dashOffset: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return this.uniforms.dashOffset.value;
+
+				},
+
+				set: function ( value ) {
+
+					this.uniforms.dashOffset.value = value;
+
+				}
+
+			},
+
+			gapSize: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return this.uniforms.gapSize.value;
+
+				},
+
+				set: function ( value ) {
+
+					this.uniforms.gapSize.value = value;
+
+				}
+
+			},
+
+			opacity: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return this.uniforms.opacity.value;
+
+				},
+
+				set: function ( value ) {
+
+					this.uniforms.opacity.value = value;
+
+				}
+
+			},
+
+			resolution: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return this.uniforms.resolution.value;
+
+				},
+
+				set: function ( value ) {
+
+					this.uniforms.resolution.value.copy( value );
+
+				}
+
+			},
+
+			alphaToCoverage: {
+
+				enumerable: true,
+
+				get: function () {
+
+					return Boolean( 'USE_ALPHA_TO_COVERAGE' in this.defines );
+
+				},
+
+				set: function ( value ) {
+
+					if ( Boolean( value ) !== Boolean( 'USE_ALPHA_TO_COVERAGE' in this.defines ) ) {
+
+						this.needsUpdate = true;
+
+					}
+
+					if ( value === true ) {
+
+						this.defines.USE_ALPHA_TO_COVERAGE = '';
+						this.extensions.derivatives = true;
+
+					} else {
+
+						delete this.defines.USE_ALPHA_TO_COVERAGE;
+						this.extensions.derivatives = false;
+
+					}
+
+				}
+
+			}
+
+		} );
+
+		this.setValues( parameters );
+
+	}
+
+}
+
+LineMaterial.prototype.isLineMaterial = true;
+
+const _start = new Vector3();
+const _end = new Vector3();
+
+const _start4 = new Vector4();
+const _end4 = new Vector4();
+
+const _ssOrigin = new Vector4();
+const _ssOrigin3 = new Vector3();
+const _mvMatrix = new Matrix4();
+const _line = new Line3();
+const _closestPoint = new Vector3();
+
+const _box = new Box3();
+const _sphere$1 = new Sphere();
+const _clipToWorldVector = new Vector4();
+
+// Returns the margin required to expand by in world space given the distance from the camera,
+// line width, resolution, and camera projection
+function getWorldSpaceHalfWidth( camera, distance, lineWidth, resolution ) {
+
+	// transform into clip space, adjust the x and y values by the pixel width offset, then
+	// transform back into world space to get world offset. Note clip space is [-1, 1] so full
+	// width does not need to be halved.
+	_clipToWorldVector.set( 0, 0, - distance, 1.0 ).applyMatrix4( camera.projectionMatrix );
+	_clipToWorldVector.multiplyScalar( 1.0 / _clipToWorldVector.w );
+	_clipToWorldVector.x = lineWidth / resolution.width;
+	_clipToWorldVector.y = lineWidth / resolution.height;
+	_clipToWorldVector.applyMatrix4( camera.projectionMatrixInverse );
+	_clipToWorldVector.multiplyScalar( 1.0 / _clipToWorldVector.w );
+
+	return Math.abs( Math.max( _clipToWorldVector.x, _clipToWorldVector.y ) );
+
+}
+
+class LineSegments2 extends Mesh {
+
+	constructor( geometry = new LineSegmentsGeometry(), material = new LineMaterial( { color: Math.random() * 0xffffff } ) ) {
+
+		super( geometry, material );
+
+		this.type = 'LineSegments2';
+
+	}
+
+	// for backwards-compatability, but could be a method of LineSegmentsGeometry...
+
+	computeLineDistances() {
+
+		const geometry = this.geometry;
+
+		const instanceStart = geometry.attributes.instanceStart;
+		const instanceEnd = geometry.attributes.instanceEnd;
+		const lineDistances = new Float32Array( 2 * instanceStart.count );
+
+		for ( let i = 0, j = 0, l = instanceStart.count; i < l; i ++, j += 2 ) {
+
+			_start.fromBufferAttribute( instanceStart, i );
+			_end.fromBufferAttribute( instanceEnd, i );
+
+			lineDistances[ j ] = ( j === 0 ) ? 0 : lineDistances[ j - 1 ];
+			lineDistances[ j + 1 ] = lineDistances[ j ] + _start.distanceTo( _end );
+
+		}
+
+		const instanceDistanceBuffer = new InstancedInterleavedBuffer( lineDistances, 2, 1 ); // d0, d1
+
+		geometry.setAttribute( 'instanceDistanceStart', new InterleavedBufferAttribute( instanceDistanceBuffer, 1, 0 ) ); // d0
+		geometry.setAttribute( 'instanceDistanceEnd', new InterleavedBufferAttribute( instanceDistanceBuffer, 1, 1 ) ); // d1
+
+		return this;
+
+	}
+
+	raycast( raycaster, intersects ) {
+
+		if ( raycaster.camera === null ) {
+
+			console.error( 'LineSegments2: "Raycaster.camera" needs to be set in order to raycast against LineSegments2.' );
+
+		}
+
+		const threshold = ( raycaster.params.Line2 !== undefined ) ? raycaster.params.Line2.threshold || 0 : 0;
+
+		const ray = raycaster.ray;
+		const camera = raycaster.camera;
+		const projectionMatrix = camera.projectionMatrix;
+
+		const matrixWorld = this.matrixWorld;
+		const geometry = this.geometry;
+		const material = this.material;
+		const resolution = material.resolution;
+		const lineWidth = material.linewidth + threshold;
+
+		const instanceStart = geometry.attributes.instanceStart;
+		const instanceEnd = geometry.attributes.instanceEnd;
+
+		// camera forward is negative
+		const near = - camera.near;
+
+		//
+
+		// check if we intersect the sphere bounds
+		if ( geometry.boundingSphere === null ) {
+
+			geometry.computeBoundingSphere();
+
+		}
+
+		_sphere$1.copy( geometry.boundingSphere ).applyMatrix4( matrixWorld );
+		const distanceToSphere = Math.max( camera.near, _sphere$1.distanceToPoint( ray.origin ) );
+
+		// increase the sphere bounds by the worst case line screen space width
+		const sphereMargin = getWorldSpaceHalfWidth( camera, distanceToSphere, lineWidth, resolution );
+		_sphere$1.radius += sphereMargin;
+
+		if ( raycaster.ray.intersectsSphere( _sphere$1 ) === false ) {
+
+			return;
+
+		}
+
+		//
+
+		// check if we intersect the box bounds
+		if ( geometry.boundingBox === null ) {
+
+			geometry.computeBoundingBox();
+
+		}
+
+		_box.copy( geometry.boundingBox ).applyMatrix4( matrixWorld );
+		const distanceToBox = Math.max( camera.near, _box.distanceToPoint( ray.origin ) );
+
+		// increase the box bounds by the worst case line screen space width
+		const boxMargin = getWorldSpaceHalfWidth( camera, distanceToBox, lineWidth, resolution );
+		_box.max.x += boxMargin;
+		_box.max.y += boxMargin;
+		_box.max.z += boxMargin;
+		_box.min.x -= boxMargin;
+		_box.min.y -= boxMargin;
+		_box.min.z -= boxMargin;
+
+		if ( raycaster.ray.intersectsBox( _box ) === false ) {
+
+			return;
+
+		}
+
+		//
+
+		// pick a point 1 unit out along the ray to avoid the ray origin
+		// sitting at the camera origin which will cause "w" to be 0 when
+		// applying the projection matrix.
+		ray.at( 1, _ssOrigin );
+
+		// ndc space [ - 1.0, 1.0 ]
+		_ssOrigin.w = 1;
+		_ssOrigin.applyMatrix4( camera.matrixWorldInverse );
+		_ssOrigin.applyMatrix4( projectionMatrix );
+		_ssOrigin.multiplyScalar( 1 / _ssOrigin.w );
+
+		// screen space
+		_ssOrigin.x *= resolution.x / 2;
+		_ssOrigin.y *= resolution.y / 2;
+		_ssOrigin.z = 0;
+
+		_ssOrigin3.copy( _ssOrigin );
+
+		_mvMatrix.multiplyMatrices( camera.matrixWorldInverse, matrixWorld );
+
+		for ( let i = 0, l = instanceStart.count; i < l; i ++ ) {
+
+			_start4.fromBufferAttribute( instanceStart, i );
+			_end4.fromBufferAttribute( instanceEnd, i );
+
+			_start4.w = 1;
+			_end4.w = 1;
+
+			// camera space
+			_start4.applyMatrix4( _mvMatrix );
+			_end4.applyMatrix4( _mvMatrix );
+
+			// skip the segment if it's entirely behind the camera
+			var isBehindCameraNear = _start4.z > near && _end4.z > near;
+			if ( isBehindCameraNear ) {
+
+				continue;
+
+			}
+
+			// trim the segment if it extends behind camera near
+			if ( _start4.z > near ) {
+
+				const deltaDist = _start4.z - _end4.z;
+				const t = ( _start4.z - near ) / deltaDist;
+				_start4.lerp( _end4, t );
+
+			} else if ( _end4.z > near ) {
+
+				const deltaDist = _end4.z - _start4.z;
+				const t = ( _end4.z - near ) / deltaDist;
+				_end4.lerp( _start4, t );
+
+			}
+
+			// clip space
+			_start4.applyMatrix4( projectionMatrix );
+			_end4.applyMatrix4( projectionMatrix );
+
+			// ndc space [ - 1.0, 1.0 ]
+			_start4.multiplyScalar( 1 / _start4.w );
+			_end4.multiplyScalar( 1 / _end4.w );
+
+			// screen space
+			_start4.x *= resolution.x / 2;
+			_start4.y *= resolution.y / 2;
+
+			_end4.x *= resolution.x / 2;
+			_end4.y *= resolution.y / 2;
+
+			// create 2d segment
+			_line.start.copy( _start4 );
+			_line.start.z = 0;
+
+			_line.end.copy( _end4 );
+			_line.end.z = 0;
+
+			// get closest point on ray to segment
+			const param = _line.closestPointToPointParameter( _ssOrigin3, true );
+			_line.at( param, _closestPoint );
+
+			// check if the intersection point is within clip space
+			const zPos = MathUtils.lerp( _start4.z, _end4.z, param );
+			const isInClipSpace = zPos >= - 1 && zPos <= 1;
+
+			const isInside = _ssOrigin3.distanceTo( _closestPoint ) < lineWidth * 0.5;
+
+			if ( isInClipSpace && isInside ) {
+
+				_line.start.fromBufferAttribute( instanceStart, i );
+				_line.end.fromBufferAttribute( instanceEnd, i );
+
+				_line.start.applyMatrix4( matrixWorld );
+				_line.end.applyMatrix4( matrixWorld );
+
+				const pointOnLine = new Vector3();
+				const point = new Vector3();
+
+				ray.distanceSqToSegment( _line.start, _line.end, point, pointOnLine );
+
+				intersects.push( {
+
+					point: point,
+					pointOnLine: pointOnLine,
+					distance: ray.origin.distanceTo( point ),
+
+					object: this,
+					face: null,
+					faceIndex: i,
+					uv: null,
+					uv2: null,
+
+				} );
+
+			}
+
+		}
+
+	}
+
+}
+
+LineSegments2.prototype.isLineSegments2 = true;
+
 var __defProp = Object.defineProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
@@ -87961,6439 +90700,6 @@ var IfcAPI2 = class {
   }
 };
 
-/**
-	 * @param  {Array<BufferGeometry>} geometries
-	 * @param  {Boolean} useGroups
-	 * @return {BufferGeometry}
-	 */
-function mergeBufferGeometries( geometries, useGroups = false ) {
-
-	const isIndexed = geometries[ 0 ].index !== null;
-
-	const attributesUsed = new Set( Object.keys( geometries[ 0 ].attributes ) );
-	const morphAttributesUsed = new Set( Object.keys( geometries[ 0 ].morphAttributes ) );
-
-	const attributes = {};
-	const morphAttributes = {};
-
-	const morphTargetsRelative = geometries[ 0 ].morphTargetsRelative;
-
-	const mergedGeometry = new BufferGeometry();
-
-	let offset = 0;
-
-	for ( let i = 0; i < geometries.length; ++ i ) {
-
-		const geometry = geometries[ i ];
-		let attributesCount = 0;
-
-		// ensure that all geometries are indexed, or none
-
-		if ( isIndexed !== ( geometry.index !== null ) ) {
-
-			console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. All geometries must have compatible attributes; make sure index attribute exists among all geometries, or in none of them.' );
-			return null;
-
-		}
-
-		// gather attributes, exit early if they're different
-
-		for ( const name in geometry.attributes ) {
-
-			if ( ! attributesUsed.has( name ) ) {
-
-				console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. All geometries must have compatible attributes; make sure "' + name + '" attribute exists among all geometries, or in none of them.' );
-				return null;
-
-			}
-
-			if ( attributes[ name ] === undefined ) attributes[ name ] = [];
-
-			attributes[ name ].push( geometry.attributes[ name ] );
-
-			attributesCount ++;
-
-		}
-
-		// ensure geometries have the same number of attributes
-
-		if ( attributesCount !== attributesUsed.size ) {
-
-			console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. Make sure all geometries have the same number of attributes.' );
-			return null;
-
-		}
-
-		// gather morph attributes, exit early if they're different
-
-		if ( morphTargetsRelative !== geometry.morphTargetsRelative ) {
-
-			console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. .morphTargetsRelative must be consistent throughout all geometries.' );
-			return null;
-
-		}
-
-		for ( const name in geometry.morphAttributes ) {
-
-			if ( ! morphAttributesUsed.has( name ) ) {
-
-				console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '.  .morphAttributes must be consistent throughout all geometries.' );
-				return null;
-
-			}
-
-			if ( morphAttributes[ name ] === undefined ) morphAttributes[ name ] = [];
-
-			morphAttributes[ name ].push( geometry.morphAttributes[ name ] );
-
-		}
-
-		// gather .userData
-
-		mergedGeometry.userData.mergedUserData = mergedGeometry.userData.mergedUserData || [];
-		mergedGeometry.userData.mergedUserData.push( geometry.userData );
-
-		if ( useGroups ) {
-
-			let count;
-
-			if ( isIndexed ) {
-
-				count = geometry.index.count;
-
-			} else if ( geometry.attributes.position !== undefined ) {
-
-				count = geometry.attributes.position.count;
-
-			} else {
-
-				console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. The geometry must have either an index or a position attribute' );
-				return null;
-
-			}
-
-			mergedGeometry.addGroup( offset, count, i );
-
-			offset += count;
-
-		}
-
-	}
-
-	// merge indices
-
-	if ( isIndexed ) {
-
-		let indexOffset = 0;
-		const mergedIndex = [];
-
-		for ( let i = 0; i < geometries.length; ++ i ) {
-
-			const index = geometries[ i ].index;
-
-			for ( let j = 0; j < index.count; ++ j ) {
-
-				mergedIndex.push( index.getX( j ) + indexOffset );
-
-			}
-
-			indexOffset += geometries[ i ].attributes.position.count;
-
-		}
-
-		mergedGeometry.setIndex( mergedIndex );
-
-	}
-
-	// merge attributes
-
-	for ( const name in attributes ) {
-
-		const mergedAttribute = mergeBufferAttributes( attributes[ name ] );
-
-		if ( ! mergedAttribute ) {
-
-			console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed while trying to merge the ' + name + ' attribute.' );
-			return null;
-
-		}
-
-		mergedGeometry.setAttribute( name, mergedAttribute );
-
-	}
-
-	// merge morph attributes
-
-	for ( const name in morphAttributes ) {
-
-		const numMorphTargets = morphAttributes[ name ][ 0 ].length;
-
-		if ( numMorphTargets === 0 ) break;
-
-		mergedGeometry.morphAttributes = mergedGeometry.morphAttributes || {};
-		mergedGeometry.morphAttributes[ name ] = [];
-
-		for ( let i = 0; i < numMorphTargets; ++ i ) {
-
-			const morphAttributesToMerge = [];
-
-			for ( let j = 0; j < morphAttributes[ name ].length; ++ j ) {
-
-				morphAttributesToMerge.push( morphAttributes[ name ][ j ][ i ] );
-
-			}
-
-			const mergedMorphAttribute = mergeBufferAttributes( morphAttributesToMerge );
-
-			if ( ! mergedMorphAttribute ) {
-
-				console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed while trying to merge the ' + name + ' morphAttribute.' );
-				return null;
-
-			}
-
-			mergedGeometry.morphAttributes[ name ].push( mergedMorphAttribute );
-
-		}
-
-	}
-
-	return mergedGeometry;
-
-}
-
-/**
- * @param {Array<BufferAttribute>} attributes
- * @return {BufferAttribute}
- */
-function mergeBufferAttributes( attributes ) {
-
-	let TypedArray;
-	let itemSize;
-	let normalized;
-	let arrayLength = 0;
-
-	for ( let i = 0; i < attributes.length; ++ i ) {
-
-		const attribute = attributes[ i ];
-
-		if ( attribute.isInterleavedBufferAttribute ) {
-
-			console.error( 'THREE.BufferGeometryUtils: .mergeBufferAttributes() failed. InterleavedBufferAttributes are not supported.' );
-			return null;
-
-		}
-
-		if ( TypedArray === undefined ) TypedArray = attribute.array.constructor;
-		if ( TypedArray !== attribute.array.constructor ) {
-
-			console.error( 'THREE.BufferGeometryUtils: .mergeBufferAttributes() failed. BufferAttribute.array must be of consistent array types across matching attributes.' );
-			return null;
-
-		}
-
-		if ( itemSize === undefined ) itemSize = attribute.itemSize;
-		if ( itemSize !== attribute.itemSize ) {
-
-			console.error( 'THREE.BufferGeometryUtils: .mergeBufferAttributes() failed. BufferAttribute.itemSize must be consistent across matching attributes.' );
-			return null;
-
-		}
-
-		if ( normalized === undefined ) normalized = attribute.normalized;
-		if ( normalized !== attribute.normalized ) {
-
-			console.error( 'THREE.BufferGeometryUtils: .mergeBufferAttributes() failed. BufferAttribute.normalized must be consistent across matching attributes.' );
-			return null;
-
-		}
-
-		arrayLength += attribute.array.length;
-
-	}
-
-	const array = new TypedArray( arrayLength );
-	let offset = 0;
-
-	for ( let i = 0; i < attributes.length; ++ i ) {
-
-		array.set( attributes[ i ].array, offset );
-
-		offset += attributes[ i ].array.length;
-
-	}
-
-	return new BufferAttribute( array, itemSize, normalized );
-
-}
-
-const nullIfcManagerErrorMessage = 'IfcManager is null!';
-
-class IFCModel extends Mesh {
-
-  constructor() {
-    super(...arguments);
-    this.modelID = IFCModel.modelIdCounter++;
-    this.ifcManager = null;
-    this.mesh = this;
-  }
-
-  static dispose() {
-    IFCModel.modelIdCounter = 0;
-  }
-
-  setIFCManager(manager) {
-    this.ifcManager = manager;
-  }
-
-  setWasmPath(path) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    this.ifcManager.setWasmPath(path);
-  }
-
-  close(scene) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    this.ifcManager.close(this.modelID, scene);
-  }
-
-  getExpressId(geometry, faceIndex) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    return this.ifcManager.getExpressId(geometry, faceIndex);
-  }
-
-  getAllItemsOfType(type, verbose) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    return this.ifcManager.getAllItemsOfType(this.modelID, type, verbose);
-  }
-
-  getItemProperties(id, recursive = false) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    return this.ifcManager.getItemProperties(this.modelID, id, recursive);
-  }
-
-  getPropertySets(id, recursive = false) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    return this.ifcManager.getPropertySets(this.modelID, id, recursive);
-  }
-
-  getTypeProperties(id, recursive = false) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    return this.ifcManager.getTypeProperties(this.modelID, id, recursive);
-  }
-
-  getIfcType(id) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    return this.ifcManager.getIfcType(this.modelID, id);
-  }
-
-  getSpatialStructure() {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    return this.ifcManager.getSpatialStructure(this.modelID);
-  }
-
-  getSubset(material) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    return this.ifcManager.getSubset(this.modelID, material);
-  }
-
-  removeSubset(material, customID) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    this.ifcManager.removeSubset(this.modelID, material, customID);
-  }
-
-  createSubset(config) {
-    if (this.ifcManager === null)
-      throw new Error(nullIfcManagerErrorMessage);
-    const modelConfig = {
-      ...config,
-      modelID: this.modelID
-    };
-    return this.ifcManager.createSubset(modelConfig);
-  }
-
-}
-
-IFCModel.modelIdCounter = 0;
-
-class IFCParser {
-
-  constructor(state, BVH) {
-    this.state = state;
-    this.BVH = BVH;
-    this.loadedModels = 0;
-    this.optionalCategories = {
-      [IFCSPACE]: true,
-      [IFCOPENINGELEMENT]: false
-    };
-    this.geometriesByMaterials = {};
-    this.loadingState = {
-      total: 0,
-      current: 0,
-      step: 0.1
-    };
-    this.currentWebIfcID = -1;
-    this.currentModelID = -1;
-  }
-
-  async setupOptionalCategories(config) {
-    this.optionalCategories = config;
-  }
-
-  async parse(buffer, coordinationMatrix) {
-    if (this.state.api.wasmModule === undefined)
-      await this.state.api.Init();
-    await this.newIfcModel(buffer);
-    this.loadedModels++;
-    if (coordinationMatrix) {
-      await this.state.api.SetGeometryTransformation(this.currentWebIfcID, coordinationMatrix);
-    }
-    return this.loadAllGeometry(this.currentWebIfcID);
-  }
-
-  getAndClearErrors(_modelId) {}
-
-  notifyProgress(loaded, total) {
-    if (this.state.onProgress)
-      this.state.onProgress({
-        loaded,
-        total
-      });
-  }
-
-  async newIfcModel(buffer) {
-    const data = new Uint8Array(buffer);
-    this.currentWebIfcID = await this.state.api.OpenModel(data, this.state.webIfcSettings);
-    this.currentModelID = this.state.useJSON ? this.loadedModels : this.currentWebIfcID;
-    this.state.models[this.currentModelID] = {
-      modelID: this.currentModelID,
-      mesh: {},
-      types: {},
-      jsonData: {}
-    };
-  }
-
-  async loadAllGeometry(modelID) {
-    this.addOptionalCategories(modelID);
-    await this.initializeLoadingState(modelID);
-    this.state.api.StreamAllMeshes(modelID, (mesh) => {
-      this.updateLoadingState();
-      this.streamMesh(modelID, mesh);
-    });
-    this.notifyLoadingEnded();
-    const geometries = [];
-    const materials = [];
-    Object.keys(this.geometriesByMaterials).forEach((key) => {
-      const geometriesByMaterial = this.geometriesByMaterials[key].geometries;
-      const merged = mergeBufferGeometries(geometriesByMaterial);
-      materials.push(this.geometriesByMaterials[key].material);
-      geometries.push(merged);
-    });
-    const combinedGeometry = mergeBufferGeometries(geometries, true);
-    this.cleanUpGeometryMemory(geometries);
-    if (this.BVH)
-      this.BVH.applyThreeMeshBVH(combinedGeometry);
-    const model = new IFCModel(combinedGeometry, materials);
-    this.state.models[this.currentModelID].mesh = model;
-    return model;
-  }
-
-  async initializeLoadingState(modelID) {
-    const shapes = await this.state.api.GetLineIDsWithType(modelID, IFCPRODUCTDEFINITIONSHAPE);
-    this.loadingState.total = shapes.size();
-    this.loadingState.current = 0;
-    this.loadingState.step = 0.1;
-  }
-
-  notifyLoadingEnded() {
-    this.notifyProgress(this.loadingState.total, this.loadingState.total);
-  }
-
-  updateLoadingState() {
-    const realCurrentItem = Math.min(this.loadingState.current++, this.loadingState.total);
-    if (realCurrentItem / this.loadingState.total >= this.loadingState.step) {
-      const currentProgress = Math.ceil(this.loadingState.total * this.loadingState.step);
-      this.notifyProgress(currentProgress, this.loadingState.total);
-      this.loadingState.step += 0.1;
-    }
-  }
-
-  addOptionalCategories(modelID) {
-    const optionalTypes = [];
-    for (let key in this.optionalCategories) {
-      if (this.optionalCategories.hasOwnProperty(key)) {
-        const category = parseInt(key);
-        if (this.optionalCategories[category])
-          optionalTypes.push(category);
-      }
-    }
-    this.state.api.StreamAllMeshesWithTypes(this.currentWebIfcID, optionalTypes, (mesh) => {
-      this.streamMesh(modelID, mesh);
-    });
-  }
-
-  streamMesh(modelID, mesh) {
-    const placedGeometries = mesh.geometries;
-    const size = placedGeometries.size();
-    for (let i = 0; i < size; i++) {
-      const placedGeometry = placedGeometries.get(i);
-      let itemMesh = this.getPlacedGeometry(modelID, mesh.expressID, placedGeometry);
-      let geom = itemMesh.geometry.applyMatrix4(itemMesh.matrix);
-      this.storeGeometryByMaterial(placedGeometry.color, geom);
-    }
-  }
-
-  getPlacedGeometry(modelID, expressID, placedGeometry) {
-    const geometry = this.getBufferGeometry(modelID, expressID, placedGeometry);
-    const mesh = new Mesh(geometry);
-    mesh.matrix = this.getMeshMatrix(placedGeometry.flatTransformation);
-    mesh.matrixAutoUpdate = false;
-    return mesh;
-  }
-
-  getBufferGeometry(modelID, expressID, placedGeometry) {
-    const geometry = this.state.api.GetGeometry(modelID, placedGeometry.geometryExpressID);
-    const verts = this.state.api.GetVertexArray(geometry.GetVertexData(), geometry.GetVertexDataSize());
-    const indices = this.state.api.GetIndexArray(geometry.GetIndexData(), geometry.GetIndexDataSize());
-    const buffer = this.ifcGeometryToBuffer(expressID, verts, indices);
-    geometry.delete();
-    return buffer;
-  }
-
-  storeGeometryByMaterial(color, geometry) {
-    let colID = `${color.x}${color.y}${color.z}${color.w}`;
-    if (this.geometriesByMaterials[colID]) {
-      this.geometriesByMaterials[colID].geometries.push(geometry);
-      return;
-    }
-    const col = new Color(color.x, color.y, color.z);
-    const material = new MeshLambertMaterial({
-      color: col,
-      side: DoubleSide
-    });
-    material.transparent = color.w !== 1;
-    if (material.transparent)
-      material.opacity = color.w;
-    this.geometriesByMaterials[colID] = {
-      material,
-      geometries: [geometry]
-    };
-  }
-
-  getMeshMatrix(matrix) {
-    const mat = new Matrix4();
-    mat.fromArray(matrix);
-    return mat;
-  }
-
-  ifcGeometryToBuffer(expressID, vertexData, indexData) {
-    const geometry = new BufferGeometry();
-    const posFloats = new Float32Array(vertexData.length / 2);
-    const normFloats = new Float32Array(vertexData.length / 2);
-    const idAttribute = new Uint32Array(vertexData.length / 6);
-    for (let i = 0; i < vertexData.length; i += 6) {
-      posFloats[i / 2] = vertexData[i];
-      posFloats[i / 2 + 1] = vertexData[i + 1];
-      posFloats[i / 2 + 2] = vertexData[i + 2];
-      normFloats[i / 2] = vertexData[i + 3];
-      normFloats[i / 2 + 1] = vertexData[i + 4];
-      normFloats[i / 2 + 2] = vertexData[i + 5];
-      idAttribute[i / 6] = expressID;
-    }
-    geometry.setAttribute('position', new BufferAttribute(posFloats, 3));
-    geometry.setAttribute('normal', new BufferAttribute(normFloats, 3));
-    geometry.setAttribute('expressID', new BufferAttribute(idAttribute, 1));
-    geometry.setIndex(new BufferAttribute(indexData, 1));
-    return geometry;
-  }
-
-  cleanUpGeometryMemory(geometries) {
-    geometries.forEach(geometry => geometry.dispose());
-    Object.keys(this.geometriesByMaterials).forEach((materialID) => {
-      const geometriesByMaterial = this.geometriesByMaterials[materialID];
-      geometriesByMaterial.geometries.forEach(geometry => geometry.dispose());
-      geometriesByMaterial.geometries = [];
-      geometriesByMaterial.material = null;
-    });
-    this.geometriesByMaterials = {};
-  }
-
-}
-
-class ItemsMap {
-
-  constructor(state) {
-    this.state = state;
-    this.map = {};
-  }
-
-  generateGeometryIndexMap(modelID) {
-    if (this.map[modelID])
-      return;
-    const geometry = this.getGeometry(modelID);
-    const items = this.newItemsMap(modelID, geometry);
-    for (const group of geometry.groups) {
-      this.fillItemsWithGroupInfo(group, geometry, items);
-    }
-  }
-
-  getSubsetID(modelID, material, customID = 'DEFAULT') {
-    const baseID = modelID;
-    const materialID = material ? material.uuid : 'DEFAULT';
-    return `${baseID} - ${materialID} - ${customID}`;
-  }
-
-  dispose() {
-    Object.values(this.map).forEach(model => {
-      model.indexCache = null;
-      model.map = null;
-    });
-    this.map = null;
-  }
-
-  getGeometry(modelID) {
-    const geometry = this.state.models[modelID].mesh.geometry;
-    if (!geometry)
-      throw new Error('Model without geometry.');
-    if (!geometry.index)
-      throw new Error('Geometry must be indexed');
-    return geometry;
-  }
-
-  newItemsMap(modelID, geometry) {
-    const startIndices = geometry.index.array;
-    this.map[modelID] = {
-      indexCache: startIndices.slice(0, geometry.index.array.length),
-      map: new Map()
-    };
-    return this.map[modelID];
-  }
-
-  fillItemsWithGroupInfo(group, geometry, items) {
-    let prevExpressID = -1;
-    const materialIndex = group.materialIndex;
-    const materialStart = group.start;
-    const materialEnd = materialStart + group.count - 1;
-    let objectStart = -1;
-    let objectEnd = -1;
-    for (let i = materialStart; i <= materialEnd; i++) {
-      const index = geometry.index.array[i];
-      const expressID = geometry.attributes.expressID.array[index];
-      if (prevExpressID === -1) {
-        prevExpressID = expressID;
-        objectStart = i;
-      }
-      const isEndOfMaterial = i === materialEnd;
-      if (isEndOfMaterial) {
-        const store = this.getMaterialStore(items.map, expressID, materialIndex);
-        store.push(objectStart, materialEnd);
-        break;
-      }
-      if (prevExpressID === expressID)
-        continue;
-      const store = this.getMaterialStore(items.map, prevExpressID, materialIndex);
-      objectEnd = i - 1;
-      store.push(objectStart, objectEnd);
-      prevExpressID = expressID;
-      objectStart = i;
-    }
-  }
-
-  getMaterialStore(map, id, matIndex) {
-    if (map.get(id) === undefined) {
-      map.set(id, {});
-    }
-    const storedIfcItem = map.get(id);
-    if (storedIfcItem === undefined)
-      throw new Error('Geometry map generation error');
-    if (storedIfcItem[matIndex] === undefined) {
-      storedIfcItem[matIndex] = [];
-    }
-    return storedIfcItem[matIndex];
-  }
-
-}
-
-class SubsetUtils {
-
-  static getAllIndicesOfGroup(modelID, ids, materialIndex, items, flatten = true) {
-    const indicesByGroup = [];
-    for (const expressID of ids) {
-      const entry = items.map.get(expressID);
-      if (!entry)
-        continue;
-      const value = entry[materialIndex];
-      if (!value)
-        continue;
-      SubsetUtils.getIndexChunk(value, indicesByGroup, materialIndex, items, flatten);
-    }
-    return indicesByGroup;
-  }
-
-  static getIndexChunk(value, indicesByGroup, materialIndex, items, flatten) {
-    const pairs = value.length / 2;
-    for (let pair = 0; pair < pairs; pair++) {
-      const pairIndex = pair * 2;
-      const start = value[pairIndex];
-      const end = value[pairIndex + 1];
-      for (let j = start; j <= end; j++) {
-        if (flatten)
-          indicesByGroup.push(items.indexCache[j]);
-        else {
-          if (!indicesByGroup[materialIndex])
-            indicesByGroup[materialIndex] = [];
-          indicesByGroup[materialIndex].push(items.indexCache[j]);
-        }
-      }
-    }
-  }
-
-}
-
-class SubsetCreator {
-
-  constructor(state, items, subsets, BVH) {
-    this.state = state;
-    this.items = items;
-    this.subsets = subsets;
-    this.BVH = BVH;
-    this.tempIndex = [];
-  }
-
-  createSubset(config, subsetID) {
-    if (!this.items.map[config.modelID])
-      this.items.generateGeometryIndexMap(config.modelID);
-    if (!this.subsets[subsetID])
-      this.initializeSubset(config, subsetID);
-    this.filterIndices(config, subsetID);
-    this.constructSubsetByMaterial(config, subsetID);
-    config.ids.forEach(id => this.subsets[subsetID].ids.add(id));
-    this.subsets[subsetID].mesh.geometry.setIndex(this.tempIndex);
-    this.tempIndex.length = 0;
-    const subset = this.subsets[subsetID].mesh;
-    if (config.applyBVH)
-      this.BVH.applyThreeMeshBVH(subset.geometry);
-    if (config.scene)
-      config.scene.add(subset);
-    return this.subsets[subsetID].mesh;
-  }
-
-  dispose() {
-    this.tempIndex = [];
-  }
-
-  initializeSubset(config, subsetID) {
-    const model = this.state.models[config.modelID].mesh;
-    const subsetGeom = new BufferGeometry();
-    this.initializeSubsetAttributes(subsetGeom, model);
-    if (!config.material)
-      this.initializeSubsetGroups(subsetGeom, model);
-    const mesh = new Mesh(subsetGeom, config.material || model.material);
-    mesh.modelID = config.modelID;
-    const bvh = Boolean(config.applyBVH);
-    this.subsets[subsetID] = {
-      ids: new Set(),
-      mesh,
-      bvh
-    };
-    model.add(mesh);
-  }
-
-  initializeSubsetAttributes(subsetGeom, model) {
-    subsetGeom.setAttribute('position', model.geometry.attributes.position);
-    subsetGeom.setAttribute('normal', model.geometry.attributes.normal);
-    subsetGeom.setAttribute('expressID', model.geometry.attributes.expressID);
-    subsetGeom.setIndex([]);
-  }
-
-  initializeSubsetGroups(subsetGeom, model) {
-    subsetGeom.groups = JSON.parse(JSON.stringify(model.geometry.groups));
-    this.resetGroups(subsetGeom);
-  }
-
-  filterIndices(config, subsetID) {
-    const geometry = this.subsets[subsetID].mesh.geometry;
-    if (config.removePrevious) {
-      geometry.setIndex([]);
-      this.resetGroups(geometry);
-      return;
-    }
-    const previousIndices = geometry.index.array;
-    const previousIDs = this.subsets[subsetID].ids;
-    config.ids = config.ids.filter(id => !previousIDs.has(id));
-    this.tempIndex = Array.from(previousIndices);
-  }
-
-  constructSubsetByMaterial(config, subsetID) {
-    const model = this.state.models[config.modelID].mesh;
-    const newIndices = {
-      count: 0
-    };
-    for (let i = 0; i < model.geometry.groups.length; i++) {
-      this.insertNewIndices(config, subsetID, i, newIndices);
-    }
-  }
-
-  insertNewIndices(config, subsetID, materialIndex, newIndices) {
-    const items = this.items.map[config.modelID];
-    const indicesOfOneMaterial = SubsetUtils.getAllIndicesOfGroup(config.modelID, config.ids, materialIndex, items);
-    if (!config.material) {
-      this.insertIndicesAtGroup(subsetID, indicesOfOneMaterial, materialIndex, newIndices);
-    } else {
-      indicesOfOneMaterial.forEach(index => this.tempIndex.push(index));
-    }
-  }
-
-  insertIndicesAtGroup(subsetID, indicesByGroup, index, newIndices) {
-    const currentGroup = this.getCurrentGroup(subsetID, index);
-    currentGroup.start += newIndices.count;
-    let newIndicesPosition = currentGroup.start + currentGroup.count;
-    newIndices.count += indicesByGroup.length;
-    if (indicesByGroup.length > 0) {
-      let position = newIndicesPosition;
-      const start = this.tempIndex.slice(0, position);
-      const end = this.tempIndex.slice(position);
-      this.tempIndex = Array.prototype.concat.apply([], [start, indicesByGroup, end]);
-      currentGroup.count += indicesByGroup.length;
-    }
-  }
-
-  getCurrentGroup(subsetID, groupIndex) {
-    const geometry = this.subsets[subsetID].mesh.geometry;
-    return geometry.groups[groupIndex];
-  }
-
-  resetGroups(geometry) {
-    geometry.groups.forEach((group) => {
-      group.start = 0;
-      group.count = 0;
-    });
-  }
-
-}
-
-class SubsetManager {
-
-  constructor(state, BVH) {
-    this.subsets = {};
-    this.state = state;
-    this.items = new ItemsMap(state);
-    this.BVH = BVH;
-    this.subsetCreator = new SubsetCreator(state, this.items, this.subsets, this.BVH);
-  }
-
-  getAllSubsets() {
-    return this.subsets;
-  }
-
-  getSubset(modelID, material, customId) {
-    const subsetID = this.getSubsetID(modelID, material, customId);
-    return this.subsets[subsetID].mesh;
-  }
-
-  removeSubset(modelID, material, customID) {
-    const subsetID = this.getSubsetID(modelID, material, customID);
-    const subset = this.subsets[subsetID];
-    if (!subset)
-      return;
-    if (subset.mesh.parent)
-      subset.mesh.removeFromParent();
-    subset.mesh.geometry.attributes = {};
-    subset.mesh.geometry.index = null;
-    subset.mesh.geometry.dispose();
-    subset.mesh.geometry = null;
-    delete this.subsets[subsetID];
-  }
-
-  createSubset(config) {
-    const subsetID = this.getSubsetID(config.modelID, config.material, config.customID);
-    return this.subsetCreator.createSubset(config, subsetID);
-  }
-
-  removeFromSubset(modelID, ids, customID, material) {
-    const subsetID = this.getSubsetID(modelID, material, customID);
-    if (!this.subsets[subsetID])
-      return;
-    const previousIDs = this.subsets[subsetID].ids;
-    ids.forEach((id) => {
-      if (previousIDs.has(id))
-        previousIDs.delete(id);
-    });
-    return this.createSubset({
-      modelID,
-      removePrevious: true,
-      material,
-      customID,
-      applyBVH: this.subsets[subsetID].bvh,
-      ids: Array.from(previousIDs),
-      scene: this.subsets[subsetID].mesh.parent
-    });
-  }
-
-  clearSubset(modelID, customID, material) {
-    const subsetID = this.getSubsetID(modelID, material, customID);
-    if (!this.subsets[subsetID])
-      return;
-    this.subsets[subsetID].ids.clear();
-    const subset = this.getSubset(modelID, material, customID);
-    subset.geometry.setIndex([]);
-  }
-
-  dispose() {
-    this.items.dispose();
-    this.subsetCreator.dispose();
-    Object.values(this.subsets).forEach(subset => {
-      subset.ids = null;
-      subset.mesh.removeFromParent();
-      const mats = subset.mesh.material;
-      if (Array.isArray(mats))
-        mats.forEach(mat => mat.dispose());
-      else
-        mats.dispose();
-      subset.mesh.geometry.index = null;
-      subset.mesh.geometry.dispose();
-      const geom = subset.mesh.geometry;
-      if (geom.disposeBoundsTree)
-        geom.disposeBoundsTree();
-      subset.mesh = null;
-    });
-    this.subsets = null;
-  }
-
-  getSubsetID(modelID, material, customID = 'DEFAULT') {
-    const baseID = modelID;
-    const materialID = material ? material.uuid : 'DEFAULT';
-    return `${baseID} - ${materialID} - ${customID}`;
-  }
-
-}
-
-const IdAttrName = 'expressID';
-const PropsNames = {
-  aggregates: {
-    name: IFCRELAGGREGATES,
-    relating: 'RelatingObject',
-    related: 'RelatedObjects',
-    key: 'children'
-  },
-  spatial: {
-    name: IFCRELCONTAINEDINSPATIALSTRUCTURE,
-    relating: 'RelatingStructure',
-    related: 'RelatedElements',
-    key: 'children'
-  },
-  psets: {
-    name: IFCRELDEFINESBYPROPERTIES,
-    relating: 'RelatingPropertyDefinition',
-    related: 'RelatedObjects',
-    key: 'hasPsets'
-  },
-  materials: {
-    name: IFCRELASSOCIATESMATERIAL,
-    relating: 'RelatingMaterial',
-    related: 'RelatedObjects',
-    key: 'hasMaterial'
-  },
-  type: {
-    name: IFCRELDEFINESBYTYPE,
-    relating: 'RelatingType',
-    related: 'RelatedObjects',
-    key: 'hasType'
-  }
-};
-
-class BasePropertyManager {
-
-  constructor(state) {
-    this.state = state;
-  }
-
-  async getPropertySets(modelID, elementID, recursive = false) {
-    return await this.getProperty(modelID, elementID, recursive, PropsNames.psets);
-  }
-
-  async getTypeProperties(modelID, elementID, recursive = false) {
-    return await this.getProperty(modelID, elementID, recursive, PropsNames.type);
-  }
-
-  async getMaterialsProperties(modelID, elementID, recursive = false) {
-    return await this.getProperty(modelID, elementID, recursive, PropsNames.materials);
-  }
-
-  async getSpatialNode(modelID, node, treeChunks, includeProperties) {
-    await this.getChildren(modelID, node, treeChunks, PropsNames.aggregates, includeProperties);
-    await this.getChildren(modelID, node, treeChunks, PropsNames.spatial, includeProperties);
-  }
-
-  async getChildren(modelID, node, treeChunks, propNames, includeProperties) {
-    const children = treeChunks[node.expressID];
-    if (children == undefined)
-      return;
-    const prop = propNames.key;
-    const nodes = [];
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i];
-      let node = this.newNode(modelID, child);
-      if (includeProperties) {
-        const properties = await this.getItemProperties(modelID, node.expressID);
-        node = {
-          ...properties, ...node
-        };
-      }
-      await this.getSpatialNode(modelID, node, treeChunks, includeProperties);
-      nodes.push(node);
-    }
-    node[prop] = nodes;
-  }
-
-  newNode(modelID, id) {
-    const typeName = this.getNodeType(modelID, id);
-    return {
-      expressID: id,
-      type: typeName,
-      children: []
-    };
-  }
-
-  async getSpatialTreeChunks(modelID) {
-    const treeChunks = {};
-    await this.getChunks(modelID, treeChunks, PropsNames.aggregates);
-    await this.getChunks(modelID, treeChunks, PropsNames.spatial);
-    return treeChunks;
-  }
-
-  saveChunk(chunks, propNames, rel) {
-    const relating = rel[propNames.relating].value;
-    const related = rel[propNames.related].map((r) => r.value);
-    if (chunks[relating] == undefined) {
-      chunks[relating] = related;
-    } else {
-      chunks[relating] = chunks[relating].concat(related);
-    }
-  }
-
-  getRelated(rel, propNames, IDs) {
-    const element = rel[propNames.relating];
-    if (!element) {
-      return console.warn(`The object with ID ${rel.expressID} has a broken reference.`);
-    }
-    if (!Array.isArray(element))
-      IDs.push(element.value);
-    else
-      element.forEach((ele) => IDs.push(ele.value));
-  }
-
-  static isRelated(id, rel, propNames) {
-    const relatedItems = rel[propNames.related];
-    if (Array.isArray(relatedItems)) {
-      const values = relatedItems.map((item) => item.value);
-      return values.includes(id);
-    }
-    return relatedItems.value === id;
-  }
-
-  static newIfcProject(id) {
-    return {
-      expressID: id,
-      type: 'IFCPROJECT',
-      children: []
-    };
-  }
-
-  async getProperty(modelID, elementID, recursive = false, propName) {}
-
-  async getChunks(modelID, chunks, propNames) {}
-
-  async getItemProperties(modelID, expressID, recursive = false) {}
-
-  getNodeType(modelID, id) {}
-
-}
-
-let IfcElements = {
-  103090709: 'IFCPROJECT',
-  4097777520: 'IFCSITE',
-  4031249490: 'IFCBUILDING',
-  3124254112: 'IFCBUILDINGSTOREY',
-  3856911033: 'IFCSPACE',
-  1674181508: 'IFCANNOTATION',
-  25142252: 'IFCCONTROLLER',
-  32344328: 'IFCBOILER',
-  76236018: 'IFCLAMP',
-  90941305: 'IFCPUMP',
-  177149247: 'IFCAIRTERMINALBOX',
-  182646315: 'IFCFLOWINSTRUMENT',
-  263784265: 'IFCFURNISHINGELEMENT',
-  264262732: 'IFCELECTRICGENERATOR',
-  277319702: 'IFCAUDIOVISUALAPPLIANCE',
-  310824031: 'IFCPIPEFITTING',
-  331165859: 'IFCSTAIR',
-  342316401: 'IFCDUCTFITTING',
-  377706215: 'IFCMECHANICALFASTENER',
-  395920057: 'IFCDOOR',
-  402227799: 'IFCELECTRICMOTOR',
-  413509423: 'IFCSYSTEMFURNITUREELEMENT',
-  484807127: 'IFCEVAPORATOR',
-  486154966: 'IFCWINDOWSTANDARDCASE',
-  629592764: 'IFCLIGHTFIXTURE',
-  630975310: 'IFCUNITARYCONTROLELEMENT',
-  635142910: 'IFCCABLECARRIERFITTING',
-  639361253: 'IFCCOIL',
-  647756555: 'IFCFASTENER',
-  707683696: 'IFCFLOWSTORAGEDEVICE',
-  738039164: 'IFCPROTECTIVEDEVICE',
-  753842376: 'IFCBEAM',
-  812556717: 'IFCTANK',
-  819412036: 'IFCFILTER',
-  843113511: 'IFCCOLUMN',
-  862014818: 'IFCELECTRICDISTRIBUTIONBOARD',
-  900683007: 'IFCFOOTING',
-  905975707: 'IFCCOLUMNSTANDARDCASE',
-  926996030: 'IFCVOIDINGFEATURE',
-  979691226: 'IFCREINFORCINGBAR',
-  987401354: 'IFCFLOWSEGMENT',
-  1003880860: 'IFCELECTRICTIMECONTROL',
-  1051757585: 'IFCCABLEFITTING',
-  1052013943: 'IFCDISTRIBUTIONCHAMBERELEMENT',
-  1062813311: 'IFCDISTRIBUTIONCONTROLELEMENT',
-  1073191201: 'IFCMEMBER',
-  1095909175: 'IFCBUILDINGELEMENTPROXY',
-  1156407060: 'IFCPLATESTANDARDCASE',
-  1162798199: 'IFCSWITCHINGDEVICE',
-  1329646415: 'IFCSHADINGDEVICE',
-  1335981549: 'IFCDISCRETEACCESSORY',
-  1360408905: 'IFCDUCTSILENCER',
-  1404847402: 'IFCSTACKTERMINAL',
-  1426591983: 'IFCFIRESUPPRESSIONTERMINAL',
-  1437502449: 'IFCMEDICALDEVICE',
-  1509553395: 'IFCFURNITURE',
-  1529196076: 'IFCSLAB',
-  1620046519: 'IFCTRANSPORTELEMENT',
-  1634111441: 'IFCAIRTERMINAL',
-  1658829314: 'IFCENERGYCONVERSIONDEVICE',
-  1677625105: 'IFCCIVILELEMENT',
-  1687234759: 'IFCPILE',
-  1904799276: 'IFCELECTRICAPPLIANCE',
-  1911478936: 'IFCMEMBERSTANDARDCASE',
-  1945004755: 'IFCDISTRIBUTIONELEMENT',
-  1973544240: 'IFCCOVERING',
-  1999602285: 'IFCSPACEHEATER',
-  2016517767: 'IFCROOF',
-  2056796094: 'IFCAIRTOAIRHEATRECOVERY',
-  2058353004: 'IFCFLOWCONTROLLER',
-  2068733104: 'IFCHUMIDIFIER',
-  2176052936: 'IFCJUNCTIONBOX',
-  2188021234: 'IFCFLOWMETER',
-  2223149337: 'IFCFLOWTERMINAL',
-  2262370178: 'IFCRAILING',
-  2272882330: 'IFCCONDENSER',
-  2295281155: 'IFCPROTECTIVEDEVICETRIPPINGUNIT',
-  2320036040: 'IFCREINFORCINGMESH',
-  2347447852: 'IFCTENDONANCHOR',
-  2391383451: 'IFCVIBRATIONISOLATOR',
-  2391406946: 'IFCWALL',
-  2474470126: 'IFCMOTORCONNECTION',
-  2769231204: 'IFCVIRTUALELEMENT',
-  2814081492: 'IFCENGINE',
-  2906023776: 'IFCBEAMSTANDARDCASE',
-  2938176219: 'IFCBURNER',
-  2979338954: 'IFCBUILDINGELEMENTPART',
-  3024970846: 'IFCRAMP',
-  3026737570: 'IFCTUBEBUNDLE',
-  3027962421: 'IFCSLABSTANDARDCASE',
-  3040386961: 'IFCDISTRIBUTIONFLOWELEMENT',
-  3053780830: 'IFCSANITARYTERMINAL',
-  3079942009: 'IFCOPENINGSTANDARDCASE',
-  3087945054: 'IFCALARM',
-  3101698114: 'IFCSURFACEFEATURE',
-  3127900445: 'IFCSLABELEMENTEDCASE',
-  3132237377: 'IFCFLOWMOVINGDEVICE',
-  3171933400: 'IFCPLATE',
-  3221913625: 'IFCCOMMUNICATIONSAPPLIANCE',
-  3242481149: 'IFCDOORSTANDARDCASE',
-  3283111854: 'IFCRAMPFLIGHT',
-  3296154744: 'IFCCHIMNEY',
-  3304561284: 'IFCWINDOW',
-  3310460725: 'IFCELECTRICFLOWSTORAGEDEVICE',
-  3319311131: 'IFCHEATEXCHANGER',
-  3415622556: 'IFCFAN',
-  3420628829: 'IFCSOLARDEVICE',
-  3493046030: 'IFCGEOGRAPHICELEMENT',
-  3495092785: 'IFCCURTAINWALL',
-  3508470533: 'IFCFLOWTREATMENTDEVICE',
-  3512223829: 'IFCWALLSTANDARDCASE',
-  3518393246: 'IFCDUCTSEGMENT',
-  3571504051: 'IFCCOMPRESSOR',
-  3588315303: 'IFCOPENINGELEMENT',
-  3612865200: 'IFCPIPESEGMENT',
-  3640358203: 'IFCCOOLINGTOWER',
-  3651124850: 'IFCPROJECTIONELEMENT',
-  3694346114: 'IFCOUTLET',
-  3747195512: 'IFCEVAPORATIVECOOLER',
-  3758799889: 'IFCCABLECARRIERSEGMENT',
-  3824725483: 'IFCTENDON',
-  3825984169: 'IFCTRANSFORMER',
-  3902619387: 'IFCCHILLER',
-  4074379575: 'IFCDAMPER',
-  4086658281: 'IFCSENSOR',
-  4123344466: 'IFCELEMENTASSEMBLY',
-  4136498852: 'IFCCOOLEDBEAM',
-  4156078855: 'IFCWALLELEMENTEDCASE',
-  4175244083: 'IFCINTERCEPTOR',
-  4207607924: 'IFCVALVE',
-  4217484030: 'IFCCABLESEGMENT',
-  4237592921: 'IFCWASTETERMINAL',
-  4252922144: 'IFCSTAIRFLIGHT',
-  4278956645: 'IFCFLOWFITTING',
-  4288193352: 'IFCACTUATOR',
-  4292641817: 'IFCUNITARYEQUIPMENT',
-  3009204131: 'IFCGRID'
-};
-
-class WebIfcPropertyManager extends BasePropertyManager {
-
-  async getItemProperties(modelID, id, recursive = false) {
-    return this.state.api.GetLine(modelID, id, recursive);
-  }
-
-  async getSpatialStructure(modelID, includeProperties) {
-    const chunks = await this.getSpatialTreeChunks(modelID);
-    const allLines = await this.state.api.GetLineIDsWithType(modelID, IFCPROJECT);
-    const projectID = allLines.get(0);
-    const project = WebIfcPropertyManager.newIfcProject(projectID);
-    await this.getSpatialNode(modelID, project, chunks, includeProperties);
-    return project;
-  }
-
-  async getAllItemsOfType(modelID, type, verbose) {
-    let items = [];
-    const lines = await this.state.api.GetLineIDsWithType(modelID, type);
-    for (let i = 0; i < lines.size(); i++)
-      items.push(lines.get(i));
-    if (!verbose)
-      return items;
-    const result = [];
-    for (let i = 0; i < items.length; i++) {
-      result.push(await this.state.api.GetLine(modelID, items[i]));
-    }
-    return result;
-  }
-
-  async getProperty(modelID, elementID, recursive = false, propName) {
-    const propSetIds = await this.getAllRelatedItemsOfType(modelID, elementID, propName);
-    const result = [];
-    for (let i = 0; i < propSetIds.length; i++) {
-      result.push(await this.state.api.GetLine(modelID, propSetIds[i], recursive));
-    }
-    return result;
-  }
-
-  getNodeType(modelID, id) {
-    const typeID = this.state.models[modelID].types[id];
-    return IfcElements[typeID];
-  }
-
-  async getChunks(modelID, chunks, propNames) {
-    const relation = await this.state.api.GetLineIDsWithType(modelID, propNames.name);
-    for (let i = 0; i < relation.size(); i++) {
-      const rel = await this.state.api.GetLine(modelID, relation.get(i), false);
-      this.saveChunk(chunks, propNames, rel);
-    }
-  }
-
-  async getAllRelatedItemsOfType(modelID, id, propNames) {
-    const lines = await this.state.api.GetLineIDsWithType(modelID, propNames.name);
-    const IDs = [];
-    for (let i = 0; i < lines.size(); i++) {
-      const rel = await this.state.api.GetLine(modelID, lines.get(i));
-      const isRelated = BasePropertyManager.isRelated(id, rel, propNames);
-      if (isRelated)
-        this.getRelated(rel, propNames, IDs);
-    }
-    return IDs;
-  }
-
-}
-
-let IfcTypesMap = {
-  3821786052: "IFCACTIONREQUEST",
-  2296667514: "IFCACTOR",
-  3630933823: "IFCACTORROLE",
-  4288193352: "IFCACTUATOR",
-  2874132201: "IFCACTUATORTYPE",
-  618182010: "IFCADDRESS",
-  1635779807: "IFCADVANCEDBREP",
-  2603310189: "IFCADVANCEDBREPWITHVOIDS",
-  3406155212: "IFCADVANCEDFACE",
-  1634111441: "IFCAIRTERMINAL",
-  177149247: "IFCAIRTERMINALBOX",
-  1411407467: "IFCAIRTERMINALBOXTYPE",
-  3352864051: "IFCAIRTERMINALTYPE",
-  2056796094: "IFCAIRTOAIRHEATRECOVERY",
-  1871374353: "IFCAIRTOAIRHEATRECOVERYTYPE",
-  3087945054: "IFCALARM",
-  3001207471: "IFCALARMTYPE",
-  325726236: "IFCALIGNMENT",
-  749761778: "IFCALIGNMENT2DHORIZONTAL",
-  3199563722: "IFCALIGNMENT2DHORIZONTALSEGMENT",
-  2483840362: "IFCALIGNMENT2DSEGMENT",
-  3379348081: "IFCALIGNMENT2DVERSEGCIRCULARARC",
-  3239324667: "IFCALIGNMENT2DVERSEGLINE",
-  4263986512: "IFCALIGNMENT2DVERSEGPARABOLICARC",
-  53199957: "IFCALIGNMENT2DVERTICAL",
-  2029264950: "IFCALIGNMENT2DVERTICALSEGMENT",
-  3512275521: "IFCALIGNMENTCURVE",
-  1674181508: "IFCANNOTATION",
-  669184980: "IFCANNOTATIONFILLAREA",
-  639542469: "IFCAPPLICATION",
-  411424972: "IFCAPPLIEDVALUE",
-  130549933: "IFCAPPROVAL",
-  3869604511: "IFCAPPROVALRELATIONSHIP",
-  3798115385: "IFCARBITRARYCLOSEDPROFILEDEF",
-  1310608509: "IFCARBITRARYOPENPROFILEDEF",
-  2705031697: "IFCARBITRARYPROFILEDEFWITHVOIDS",
-  3460190687: "IFCASSET",
-  3207858831: "IFCASYMMETRICISHAPEPROFILEDEF",
-  277319702: "IFCAUDIOVISUALAPPLIANCE",
-  1532957894: "IFCAUDIOVISUALAPPLIANCETYPE",
-  4261334040: "IFCAXIS1PLACEMENT",
-  3125803723: "IFCAXIS2PLACEMENT2D",
-  2740243338: "IFCAXIS2PLACEMENT3D",
-  1967976161: "IFCBSPLINECURVE",
-  2461110595: "IFCBSPLINECURVEWITHKNOTS",
-  2887950389: "IFCBSPLINESURFACE",
-  167062518: "IFCBSPLINESURFACEWITHKNOTS",
-  753842376: "IFCBEAM",
-  2906023776: "IFCBEAMSTANDARDCASE",
-  819618141: "IFCBEAMTYPE",
-  4196446775: "IFCBEARING",
-  3649138523: "IFCBEARINGTYPE",
-  616511568: "IFCBLOBTEXTURE",
-  1334484129: "IFCBLOCK",
-  32344328: "IFCBOILER",
-  231477066: "IFCBOILERTYPE",
-  3649129432: "IFCBOOLEANCLIPPINGRESULT",
-  2736907675: "IFCBOOLEANRESULT",
-  4037036970: "IFCBOUNDARYCONDITION",
-  1136057603: "IFCBOUNDARYCURVE",
-  1560379544: "IFCBOUNDARYEDGECONDITION",
-  3367102660: "IFCBOUNDARYFACECONDITION",
-  1387855156: "IFCBOUNDARYNODECONDITION",
-  2069777674: "IFCBOUNDARYNODECONDITIONWARPING",
-  1260505505: "IFCBOUNDEDCURVE",
-  4182860854: "IFCBOUNDEDSURFACE",
-  2581212453: "IFCBOUNDINGBOX",
-  2713105998: "IFCBOXEDHALFSPACE",
-  644574406: "IFCBRIDGE",
-  963979645: "IFCBRIDGEPART",
-  4031249490: "IFCBUILDING",
-  3299480353: "IFCBUILDINGELEMENT",
-  2979338954: "IFCBUILDINGELEMENTPART",
-  39481116: "IFCBUILDINGELEMENTPARTTYPE",
-  1095909175: "IFCBUILDINGELEMENTPROXY",
-  1909888760: "IFCBUILDINGELEMENTPROXYTYPE",
-  1950629157: "IFCBUILDINGELEMENTTYPE",
-  3124254112: "IFCBUILDINGSTOREY",
-  1177604601: "IFCBUILDINGSYSTEM",
-  2938176219: "IFCBURNER",
-  2188180465: "IFCBURNERTYPE",
-  2898889636: "IFCCSHAPEPROFILEDEF",
-  635142910: "IFCCABLECARRIERFITTING",
-  395041908: "IFCCABLECARRIERFITTINGTYPE",
-  3758799889: "IFCCABLECARRIERSEGMENT",
-  3293546465: "IFCCABLECARRIERSEGMENTTYPE",
-  1051757585: "IFCCABLEFITTING",
-  2674252688: "IFCCABLEFITTINGTYPE",
-  4217484030: "IFCCABLESEGMENT",
-  1285652485: "IFCCABLESEGMENTTYPE",
-  3999819293: "IFCCAISSONFOUNDATION",
-  3203706013: "IFCCAISSONFOUNDATIONTYPE",
-  1123145078: "IFCCARTESIANPOINT",
-  574549367: "IFCCARTESIANPOINTLIST",
-  1675464909: "IFCCARTESIANPOINTLIST2D",
-  2059837836: "IFCCARTESIANPOINTLIST3D",
-  59481748: "IFCCARTESIANTRANSFORMATIONOPERATOR",
-  3749851601: "IFCCARTESIANTRANSFORMATIONOPERATOR2D",
-  3486308946: "IFCCARTESIANTRANSFORMATIONOPERATOR2DNONUNIFORM",
-  3331915920: "IFCCARTESIANTRANSFORMATIONOPERATOR3D",
-  1416205885: "IFCCARTESIANTRANSFORMATIONOPERATOR3DNONUNIFORM",
-  3150382593: "IFCCENTERLINEPROFILEDEF",
-  3902619387: "IFCCHILLER",
-  2951183804: "IFCCHILLERTYPE",
-  3296154744: "IFCCHIMNEY",
-  2197970202: "IFCCHIMNEYTYPE",
-  2611217952: "IFCCIRCLE",
-  2937912522: "IFCCIRCLEHOLLOWPROFILEDEF",
-  1383045692: "IFCCIRCLEPROFILEDEF",
-  1062206242: "IFCCIRCULARARCSEGMENT2D",
-  1677625105: "IFCCIVILELEMENT",
-  3893394355: "IFCCIVILELEMENTTYPE",
-  747523909: "IFCCLASSIFICATION",
-  647927063: "IFCCLASSIFICATIONREFERENCE",
-  2205249479: "IFCCLOSEDSHELL",
-  639361253: "IFCCOIL",
-  2301859152: "IFCCOILTYPE",
-  776857604: "IFCCOLOURRGB",
-  3285139300: "IFCCOLOURRGBLIST",
-  3264961684: "IFCCOLOURSPECIFICATION",
-  843113511: "IFCCOLUMN",
-  905975707: "IFCCOLUMNSTANDARDCASE",
-  300633059: "IFCCOLUMNTYPE",
-  3221913625: "IFCCOMMUNICATIONSAPPLIANCE",
-  400855858: "IFCCOMMUNICATIONSAPPLIANCETYPE",
-  2542286263: "IFCCOMPLEXPROPERTY",
-  3875453745: "IFCCOMPLEXPROPERTYTEMPLATE",
-  3732776249: "IFCCOMPOSITECURVE",
-  15328376: "IFCCOMPOSITECURVEONSURFACE",
-  2485617015: "IFCCOMPOSITECURVESEGMENT",
-  1485152156: "IFCCOMPOSITEPROFILEDEF",
-  3571504051: "IFCCOMPRESSOR",
-  3850581409: "IFCCOMPRESSORTYPE",
-  2272882330: "IFCCONDENSER",
-  2816379211: "IFCCONDENSERTYPE",
-  2510884976: "IFCCONIC",
-  370225590: "IFCCONNECTEDFACESET",
-  1981873012: "IFCCONNECTIONCURVEGEOMETRY",
-  2859738748: "IFCCONNECTIONGEOMETRY",
-  45288368: "IFCCONNECTIONPOINTECCENTRICITY",
-  2614616156: "IFCCONNECTIONPOINTGEOMETRY",
-  2732653382: "IFCCONNECTIONSURFACEGEOMETRY",
-  775493141: "IFCCONNECTIONVOLUMEGEOMETRY",
-  1959218052: "IFCCONSTRAINT",
-  3898045240: "IFCCONSTRUCTIONEQUIPMENTRESOURCE",
-  2185764099: "IFCCONSTRUCTIONEQUIPMENTRESOURCETYPE",
-  1060000209: "IFCCONSTRUCTIONMATERIALRESOURCE",
-  4105962743: "IFCCONSTRUCTIONMATERIALRESOURCETYPE",
-  488727124: "IFCCONSTRUCTIONPRODUCTRESOURCE",
-  1525564444: "IFCCONSTRUCTIONPRODUCTRESOURCETYPE",
-  2559216714: "IFCCONSTRUCTIONRESOURCE",
-  2574617495: "IFCCONSTRUCTIONRESOURCETYPE",
-  3419103109: "IFCCONTEXT",
-  3050246964: "IFCCONTEXTDEPENDENTUNIT",
-  3293443760: "IFCCONTROL",
-  25142252: "IFCCONTROLLER",
-  578613899: "IFCCONTROLLERTYPE",
-  2889183280: "IFCCONVERSIONBASEDUNIT",
-  2713554722: "IFCCONVERSIONBASEDUNITWITHOFFSET",
-  4136498852: "IFCCOOLEDBEAM",
-  335055490: "IFCCOOLEDBEAMTYPE",
-  3640358203: "IFCCOOLINGTOWER",
-  2954562838: "IFCCOOLINGTOWERTYPE",
-  1785450214: "IFCCOORDINATEOPERATION",
-  1466758467: "IFCCOORDINATEREFERENCESYSTEM",
-  3895139033: "IFCCOSTITEM",
-  1419761937: "IFCCOSTSCHEDULE",
-  602808272: "IFCCOSTVALUE",
-  1973544240: "IFCCOVERING",
-  1916426348: "IFCCOVERINGTYPE",
-  3295246426: "IFCCREWRESOURCE",
-  1815067380: "IFCCREWRESOURCETYPE",
-  2506170314: "IFCCSGPRIMITIVE3D",
-  2147822146: "IFCCSGSOLID",
-  539742890: "IFCCURRENCYRELATIONSHIP",
-  3495092785: "IFCCURTAINWALL",
-  1457835157: "IFCCURTAINWALLTYPE",
-  2601014836: "IFCCURVE",
-  2827736869: "IFCCURVEBOUNDEDPLANE",
-  2629017746: "IFCCURVEBOUNDEDSURFACE",
-  1186437898: "IFCCURVESEGMENT2D",
-  3800577675: "IFCCURVESTYLE",
-  1105321065: "IFCCURVESTYLEFONT",
-  2367409068: "IFCCURVESTYLEFONTANDSCALING",
-  3510044353: "IFCCURVESTYLEFONTPATTERN",
-  1213902940: "IFCCYLINDRICALSURFACE",
-  4074379575: "IFCDAMPER",
-  3961806047: "IFCDAMPERTYPE",
-  3426335179: "IFCDEEPFOUNDATION",
-  1306400036: "IFCDEEPFOUNDATIONTYPE",
-  3632507154: "IFCDERIVEDPROFILEDEF",
-  1765591967: "IFCDERIVEDUNIT",
-  1045800335: "IFCDERIVEDUNITELEMENT",
-  2949456006: "IFCDIMENSIONALEXPONENTS",
-  32440307: "IFCDIRECTION",
-  1335981549: "IFCDISCRETEACCESSORY",
-  2635815018: "IFCDISCRETEACCESSORYTYPE",
-  1945343521: "IFCDISTANCEEXPRESSION",
-  1052013943: "IFCDISTRIBUTIONCHAMBERELEMENT",
-  1599208980: "IFCDISTRIBUTIONCHAMBERELEMENTTYPE",
-  562808652: "IFCDISTRIBUTIONCIRCUIT",
-  1062813311: "IFCDISTRIBUTIONCONTROLELEMENT",
-  2063403501: "IFCDISTRIBUTIONCONTROLELEMENTTYPE",
-  1945004755: "IFCDISTRIBUTIONELEMENT",
-  3256556792: "IFCDISTRIBUTIONELEMENTTYPE",
-  3040386961: "IFCDISTRIBUTIONFLOWELEMENT",
-  3849074793: "IFCDISTRIBUTIONFLOWELEMENTTYPE",
-  3041715199: "IFCDISTRIBUTIONPORT",
-  3205830791: "IFCDISTRIBUTIONSYSTEM",
-  1154170062: "IFCDOCUMENTINFORMATION",
-  770865208: "IFCDOCUMENTINFORMATIONRELATIONSHIP",
-  3732053477: "IFCDOCUMENTREFERENCE",
-  395920057: "IFCDOOR",
-  2963535650: "IFCDOORLININGPROPERTIES",
-  1714330368: "IFCDOORPANELPROPERTIES",
-  3242481149: "IFCDOORSTANDARDCASE",
-  526551008: "IFCDOORSTYLE",
-  2323601079: "IFCDOORTYPE",
-  445594917: "IFCDRAUGHTINGPREDEFINEDCOLOUR",
-  4006246654: "IFCDRAUGHTINGPREDEFINEDCURVEFONT",
-  342316401: "IFCDUCTFITTING",
-  869906466: "IFCDUCTFITTINGTYPE",
-  3518393246: "IFCDUCTSEGMENT",
-  3760055223: "IFCDUCTSEGMENTTYPE",
-  1360408905: "IFCDUCTSILENCER",
-  2030761528: "IFCDUCTSILENCERTYPE",
-  3900360178: "IFCEDGE",
-  476780140: "IFCEDGECURVE",
-  1472233963: "IFCEDGELOOP",
-  1904799276: "IFCELECTRICAPPLIANCE",
-  663422040: "IFCELECTRICAPPLIANCETYPE",
-  862014818: "IFCELECTRICDISTRIBUTIONBOARD",
-  2417008758: "IFCELECTRICDISTRIBUTIONBOARDTYPE",
-  3310460725: "IFCELECTRICFLOWSTORAGEDEVICE",
-  3277789161: "IFCELECTRICFLOWSTORAGEDEVICETYPE",
-  264262732: "IFCELECTRICGENERATOR",
-  1534661035: "IFCELECTRICGENERATORTYPE",
-  402227799: "IFCELECTRICMOTOR",
-  1217240411: "IFCELECTRICMOTORTYPE",
-  1003880860: "IFCELECTRICTIMECONTROL",
-  712377611: "IFCELECTRICTIMECONTROLTYPE",
-  1758889154: "IFCELEMENT",
-  4123344466: "IFCELEMENTASSEMBLY",
-  2397081782: "IFCELEMENTASSEMBLYTYPE",
-  1623761950: "IFCELEMENTCOMPONENT",
-  2590856083: "IFCELEMENTCOMPONENTTYPE",
-  1883228015: "IFCELEMENTQUANTITY",
-  339256511: "IFCELEMENTTYPE",
-  2777663545: "IFCELEMENTARYSURFACE",
-  1704287377: "IFCELLIPSE",
-  2835456948: "IFCELLIPSEPROFILEDEF",
-  1658829314: "IFCENERGYCONVERSIONDEVICE",
-  2107101300: "IFCENERGYCONVERSIONDEVICETYPE",
-  2814081492: "IFCENGINE",
-  132023988: "IFCENGINETYPE",
-  3747195512: "IFCEVAPORATIVECOOLER",
-  3174744832: "IFCEVAPORATIVECOOLERTYPE",
-  484807127: "IFCEVAPORATOR",
-  3390157468: "IFCEVAPORATORTYPE",
-  4148101412: "IFCEVENT",
-  211053100: "IFCEVENTTIME",
-  4024345920: "IFCEVENTTYPE",
-  297599258: "IFCEXTENDEDPROPERTIES",
-  4294318154: "IFCEXTERNALINFORMATION",
-  3200245327: "IFCEXTERNALREFERENCE",
-  1437805879: "IFCEXTERNALREFERENCERELATIONSHIP",
-  1209101575: "IFCEXTERNALSPATIALELEMENT",
-  2853485674: "IFCEXTERNALSPATIALSTRUCTUREELEMENT",
-  2242383968: "IFCEXTERNALLYDEFINEDHATCHSTYLE",
-  1040185647: "IFCEXTERNALLYDEFINEDSURFACESTYLE",
-  3548104201: "IFCEXTERNALLYDEFINEDTEXTFONT",
-  477187591: "IFCEXTRUDEDAREASOLID",
-  2804161546: "IFCEXTRUDEDAREASOLIDTAPERED",
-  2556980723: "IFCFACE",
-  2047409740: "IFCFACEBASEDSURFACEMODEL",
-  1809719519: "IFCFACEBOUND",
-  803316827: "IFCFACEOUTERBOUND",
-  3008276851: "IFCFACESURFACE",
-  807026263: "IFCFACETEDBREP",
-  3737207727: "IFCFACETEDBREPWITHVOIDS",
-  24185140: "IFCFACILITY",
-  1310830890: "IFCFACILITYPART",
-  4219587988: "IFCFAILURECONNECTIONCONDITION",
-  3415622556: "IFCFAN",
-  346874300: "IFCFANTYPE",
-  647756555: "IFCFASTENER",
-  2489546625: "IFCFASTENERTYPE",
-  2827207264: "IFCFEATUREELEMENT",
-  2143335405: "IFCFEATUREELEMENTADDITION",
-  1287392070: "IFCFEATUREELEMENTSUBTRACTION",
-  738692330: "IFCFILLAREASTYLE",
-  374418227: "IFCFILLAREASTYLEHATCHING",
-  315944413: "IFCFILLAREASTYLETILES",
-  819412036: "IFCFILTER",
-  1810631287: "IFCFILTERTYPE",
-  1426591983: "IFCFIRESUPPRESSIONTERMINAL",
-  4222183408: "IFCFIRESUPPRESSIONTERMINALTYPE",
-  2652556860: "IFCFIXEDREFERENCESWEPTAREASOLID",
-  2058353004: "IFCFLOWCONTROLLER",
-  3907093117: "IFCFLOWCONTROLLERTYPE",
-  4278956645: "IFCFLOWFITTING",
-  3198132628: "IFCFLOWFITTINGTYPE",
-  182646315: "IFCFLOWINSTRUMENT",
-  4037862832: "IFCFLOWINSTRUMENTTYPE",
-  2188021234: "IFCFLOWMETER",
-  3815607619: "IFCFLOWMETERTYPE",
-  3132237377: "IFCFLOWMOVINGDEVICE",
-  1482959167: "IFCFLOWMOVINGDEVICETYPE",
-  987401354: "IFCFLOWSEGMENT",
-  1834744321: "IFCFLOWSEGMENTTYPE",
-  707683696: "IFCFLOWSTORAGEDEVICE",
-  1339347760: "IFCFLOWSTORAGEDEVICETYPE",
-  2223149337: "IFCFLOWTERMINAL",
-  2297155007: "IFCFLOWTERMINALTYPE",
-  3508470533: "IFCFLOWTREATMENTDEVICE",
-  3009222698: "IFCFLOWTREATMENTDEVICETYPE",
-  900683007: "IFCFOOTING",
-  1893162501: "IFCFOOTINGTYPE",
-  263784265: "IFCFURNISHINGELEMENT",
-  4238390223: "IFCFURNISHINGELEMENTTYPE",
-  1509553395: "IFCFURNITURE",
-  1268542332: "IFCFURNITURETYPE",
-  3493046030: "IFCGEOGRAPHICELEMENT",
-  4095422895: "IFCGEOGRAPHICELEMENTTYPE",
-  987898635: "IFCGEOMETRICCURVESET",
-  3448662350: "IFCGEOMETRICREPRESENTATIONCONTEXT",
-  2453401579: "IFCGEOMETRICREPRESENTATIONITEM",
-  4142052618: "IFCGEOMETRICREPRESENTATIONSUBCONTEXT",
-  3590301190: "IFCGEOMETRICSET",
-  3009204131: "IFCGRID",
-  852622518: "IFCGRIDAXIS",
-  178086475: "IFCGRIDPLACEMENT",
-  2706460486: "IFCGROUP",
-  812098782: "IFCHALFSPACESOLID",
-  3319311131: "IFCHEATEXCHANGER",
-  1251058090: "IFCHEATEXCHANGERTYPE",
-  2068733104: "IFCHUMIDIFIER",
-  1806887404: "IFCHUMIDIFIERTYPE",
-  1484403080: "IFCISHAPEPROFILEDEF",
-  3905492369: "IFCIMAGETEXTURE",
-  3570813810: "IFCINDEXEDCOLOURMAP",
-  2571569899: "IFCINDEXEDPOLYCURVE",
-  178912537: "IFCINDEXEDPOLYGONALFACE",
-  2294589976: "IFCINDEXEDPOLYGONALFACEWITHVOIDS",
-  1437953363: "IFCINDEXEDTEXTUREMAP",
-  2133299955: "IFCINDEXEDTRIANGLETEXTUREMAP",
-  4175244083: "IFCINTERCEPTOR",
-  3946677679: "IFCINTERCEPTORTYPE",
-  3113134337: "IFCINTERSECTIONCURVE",
-  2391368822: "IFCINVENTORY",
-  3741457305: "IFCIRREGULARTIMESERIES",
-  3020489413: "IFCIRREGULARTIMESERIESVALUE",
-  2176052936: "IFCJUNCTIONBOX",
-  4288270099: "IFCJUNCTIONBOXTYPE",
-  572779678: "IFCLSHAPEPROFILEDEF",
-  3827777499: "IFCLABORRESOURCE",
-  428585644: "IFCLABORRESOURCETYPE",
-  1585845231: "IFCLAGTIME",
-  76236018: "IFCLAMP",
-  1051575348: "IFCLAMPTYPE",
-  2655187982: "IFCLIBRARYINFORMATION",
-  3452421091: "IFCLIBRARYREFERENCE",
-  4162380809: "IFCLIGHTDISTRIBUTIONDATA",
-  629592764: "IFCLIGHTFIXTURE",
-  1161773419: "IFCLIGHTFIXTURETYPE",
-  1566485204: "IFCLIGHTINTENSITYDISTRIBUTION",
-  1402838566: "IFCLIGHTSOURCE",
-  125510826: "IFCLIGHTSOURCEAMBIENT",
-  2604431987: "IFCLIGHTSOURCEDIRECTIONAL",
-  4266656042: "IFCLIGHTSOURCEGONIOMETRIC",
-  1520743889: "IFCLIGHTSOURCEPOSITIONAL",
-  3422422726: "IFCLIGHTSOURCESPOT",
-  1281925730: "IFCLINE",
-  3092502836: "IFCLINESEGMENT2D",
-  388784114: "IFCLINEARPLACEMENT",
-  1154579445: "IFCLINEARPOSITIONINGELEMENT",
-  2624227202: "IFCLOCALPLACEMENT",
-  1008929658: "IFCLOOP",
-  1425443689: "IFCMANIFOLDSOLIDBREP",
-  3057273783: "IFCMAPCONVERSION",
-  2347385850: "IFCMAPPEDITEM",
-  1838606355: "IFCMATERIAL",
-  1847130766: "IFCMATERIALCLASSIFICATIONRELATIONSHIP",
-  3708119000: "IFCMATERIALCONSTITUENT",
-  2852063980: "IFCMATERIALCONSTITUENTSET",
-  760658860: "IFCMATERIALDEFINITION",
-  2022407955: "IFCMATERIALDEFINITIONREPRESENTATION",
-  248100487: "IFCMATERIALLAYER",
-  3303938423: "IFCMATERIALLAYERSET",
-  1303795690: "IFCMATERIALLAYERSETUSAGE",
-  1847252529: "IFCMATERIALLAYERWITHOFFSETS",
-  2199411900: "IFCMATERIALLIST",
-  2235152071: "IFCMATERIALPROFILE",
-  164193824: "IFCMATERIALPROFILESET",
-  3079605661: "IFCMATERIALPROFILESETUSAGE",
-  3404854881: "IFCMATERIALPROFILESETUSAGETAPERING",
-  552965576: "IFCMATERIALPROFILEWITHOFFSETS",
-  3265635763: "IFCMATERIALPROPERTIES",
-  853536259: "IFCMATERIALRELATIONSHIP",
-  1507914824: "IFCMATERIALUSAGEDEFINITION",
-  2597039031: "IFCMEASUREWITHUNIT",
-  377706215: "IFCMECHANICALFASTENER",
-  2108223431: "IFCMECHANICALFASTENERTYPE",
-  1437502449: "IFCMEDICALDEVICE",
-  1114901282: "IFCMEDICALDEVICETYPE",
-  1073191201: "IFCMEMBER",
-  1911478936: "IFCMEMBERSTANDARDCASE",
-  3181161470: "IFCMEMBERTYPE",
-  3368373690: "IFCMETRIC",
-  2998442950: "IFCMIRROREDPROFILEDEF",
-  2706619895: "IFCMONETARYUNIT",
-  2474470126: "IFCMOTORCONNECTION",
-  977012517: "IFCMOTORCONNECTIONTYPE",
-  1918398963: "IFCNAMEDUNIT",
-  3888040117: "IFCOBJECT",
-  219451334: "IFCOBJECTDEFINITION",
-  3701648758: "IFCOBJECTPLACEMENT",
-  2251480897: "IFCOBJECTIVE",
-  4143007308: "IFCOCCUPANT",
-  590820931: "IFCOFFSETCURVE",
-  3388369263: "IFCOFFSETCURVE2D",
-  3505215534: "IFCOFFSETCURVE3D",
-  2485787929: "IFCOFFSETCURVEBYDISTANCES",
-  2665983363: "IFCOPENSHELL",
-  3588315303: "IFCOPENINGELEMENT",
-  3079942009: "IFCOPENINGSTANDARDCASE",
-  4251960020: "IFCORGANIZATION",
-  1411181986: "IFCORGANIZATIONRELATIONSHIP",
-  643959842: "IFCORIENTATIONEXPRESSION",
-  1029017970: "IFCORIENTEDEDGE",
-  144952367: "IFCOUTERBOUNDARYCURVE",
-  3694346114: "IFCOUTLET",
-  2837617999: "IFCOUTLETTYPE",
-  1207048766: "IFCOWNERHISTORY",
-  2529465313: "IFCPARAMETERIZEDPROFILEDEF",
-  2519244187: "IFCPATH",
-  1682466193: "IFCPCURVE",
-  2382730787: "IFCPERFORMANCEHISTORY",
-  3566463478: "IFCPERMEABLECOVERINGPROPERTIES",
-  3327091369: "IFCPERMIT",
-  2077209135: "IFCPERSON",
-  101040310: "IFCPERSONANDORGANIZATION",
-  3021840470: "IFCPHYSICALCOMPLEXQUANTITY",
-  2483315170: "IFCPHYSICALQUANTITY",
-  2226359599: "IFCPHYSICALSIMPLEQUANTITY",
-  1687234759: "IFCPILE",
-  1158309216: "IFCPILETYPE",
-  310824031: "IFCPIPEFITTING",
-  804291784: "IFCPIPEFITTINGTYPE",
-  3612865200: "IFCPIPESEGMENT",
-  4231323485: "IFCPIPESEGMENTTYPE",
-  597895409: "IFCPIXELTEXTURE",
-  2004835150: "IFCPLACEMENT",
-  603570806: "IFCPLANARBOX",
-  1663979128: "IFCPLANAREXTENT",
-  220341763: "IFCPLANE",
-  3171933400: "IFCPLATE",
-  1156407060: "IFCPLATESTANDARDCASE",
-  4017108033: "IFCPLATETYPE",
-  2067069095: "IFCPOINT",
-  4022376103: "IFCPOINTONCURVE",
-  1423911732: "IFCPOINTONSURFACE",
-  2924175390: "IFCPOLYLOOP",
-  2775532180: "IFCPOLYGONALBOUNDEDHALFSPACE",
-  2839578677: "IFCPOLYGONALFACESET",
-  3724593414: "IFCPOLYLINE",
-  3740093272: "IFCPORT",
-  1946335990: "IFCPOSITIONINGELEMENT",
-  3355820592: "IFCPOSTALADDRESS",
-  759155922: "IFCPREDEFINEDCOLOUR",
-  2559016684: "IFCPREDEFINEDCURVEFONT",
-  3727388367: "IFCPREDEFINEDITEM",
-  3778827333: "IFCPREDEFINEDPROPERTIES",
-  3967405729: "IFCPREDEFINEDPROPERTYSET",
-  1775413392: "IFCPREDEFINEDTEXTFONT",
-  677532197: "IFCPRESENTATIONITEM",
-  2022622350: "IFCPRESENTATIONLAYERASSIGNMENT",
-  1304840413: "IFCPRESENTATIONLAYERWITHSTYLE",
-  3119450353: "IFCPRESENTATIONSTYLE",
-  2417041796: "IFCPRESENTATIONSTYLEASSIGNMENT",
-  2744685151: "IFCPROCEDURE",
-  569719735: "IFCPROCEDURETYPE",
-  2945172077: "IFCPROCESS",
-  4208778838: "IFCPRODUCT",
-  673634403: "IFCPRODUCTDEFINITIONSHAPE",
-  2095639259: "IFCPRODUCTREPRESENTATION",
-  3958567839: "IFCPROFILEDEF",
-  2802850158: "IFCPROFILEPROPERTIES",
-  103090709: "IFCPROJECT",
-  653396225: "IFCPROJECTLIBRARY",
-  2904328755: "IFCPROJECTORDER",
-  3843373140: "IFCPROJECTEDCRS",
-  3651124850: "IFCPROJECTIONELEMENT",
-  2598011224: "IFCPROPERTY",
-  986844984: "IFCPROPERTYABSTRACTION",
-  871118103: "IFCPROPERTYBOUNDEDVALUE",
-  1680319473: "IFCPROPERTYDEFINITION",
-  148025276: "IFCPROPERTYDEPENDENCYRELATIONSHIP",
-  4166981789: "IFCPROPERTYENUMERATEDVALUE",
-  3710013099: "IFCPROPERTYENUMERATION",
-  2752243245: "IFCPROPERTYLISTVALUE",
-  941946838: "IFCPROPERTYREFERENCEVALUE",
-  1451395588: "IFCPROPERTYSET",
-  3357820518: "IFCPROPERTYSETDEFINITION",
-  492091185: "IFCPROPERTYSETTEMPLATE",
-  3650150729: "IFCPROPERTYSINGLEVALUE",
-  110355661: "IFCPROPERTYTABLEVALUE",
-  3521284610: "IFCPROPERTYTEMPLATE",
-  1482703590: "IFCPROPERTYTEMPLATEDEFINITION",
-  738039164: "IFCPROTECTIVEDEVICE",
-  2295281155: "IFCPROTECTIVEDEVICETRIPPINGUNIT",
-  655969474: "IFCPROTECTIVEDEVICETRIPPINGUNITTYPE",
-  1842657554: "IFCPROTECTIVEDEVICETYPE",
-  3219374653: "IFCPROXY",
-  90941305: "IFCPUMP",
-  2250791053: "IFCPUMPTYPE",
-  2044713172: "IFCQUANTITYAREA",
-  2093928680: "IFCQUANTITYCOUNT",
-  931644368: "IFCQUANTITYLENGTH",
-  2090586900: "IFCQUANTITYSET",
-  3252649465: "IFCQUANTITYTIME",
-  2405470396: "IFCQUANTITYVOLUME",
-  825690147: "IFCQUANTITYWEIGHT",
-  2262370178: "IFCRAILING",
-  2893384427: "IFCRAILINGTYPE",
-  3024970846: "IFCRAMP",
-  3283111854: "IFCRAMPFLIGHT",
-  2324767716: "IFCRAMPFLIGHTTYPE",
-  1469900589: "IFCRAMPTYPE",
-  1232101972: "IFCRATIONALBSPLINECURVEWITHKNOTS",
-  683857671: "IFCRATIONALBSPLINESURFACEWITHKNOTS",
-  2770003689: "IFCRECTANGLEHOLLOWPROFILEDEF",
-  3615266464: "IFCRECTANGLEPROFILEDEF",
-  2798486643: "IFCRECTANGULARPYRAMID",
-  3454111270: "IFCRECTANGULARTRIMMEDSURFACE",
-  3915482550: "IFCRECURRENCEPATTERN",
-  2433181523: "IFCREFERENCE",
-  4021432810: "IFCREFERENT",
-  3413951693: "IFCREGULARTIMESERIES",
-  1580146022: "IFCREINFORCEMENTBARPROPERTIES",
-  3765753017: "IFCREINFORCEMENTDEFINITIONPROPERTIES",
-  979691226: "IFCREINFORCINGBAR",
-  2572171363: "IFCREINFORCINGBARTYPE",
-  3027567501: "IFCREINFORCINGELEMENT",
-  964333572: "IFCREINFORCINGELEMENTTYPE",
-  2320036040: "IFCREINFORCINGMESH",
-  2310774935: "IFCREINFORCINGMESHTYPE",
-  160246688: "IFCRELAGGREGATES",
-  3939117080: "IFCRELASSIGNS",
-  1683148259: "IFCRELASSIGNSTOACTOR",
-  2495723537: "IFCRELASSIGNSTOCONTROL",
-  1307041759: "IFCRELASSIGNSTOGROUP",
-  1027710054: "IFCRELASSIGNSTOGROUPBYFACTOR",
-  4278684876: "IFCRELASSIGNSTOPROCESS",
-  2857406711: "IFCRELASSIGNSTOPRODUCT",
-  205026976: "IFCRELASSIGNSTORESOURCE",
-  1865459582: "IFCRELASSOCIATES",
-  4095574036: "IFCRELASSOCIATESAPPROVAL",
-  919958153: "IFCRELASSOCIATESCLASSIFICATION",
-  2728634034: "IFCRELASSOCIATESCONSTRAINT",
-  982818633: "IFCRELASSOCIATESDOCUMENT",
-  3840914261: "IFCRELASSOCIATESLIBRARY",
-  2655215786: "IFCRELASSOCIATESMATERIAL",
-  826625072: "IFCRELCONNECTS",
-  1204542856: "IFCRELCONNECTSELEMENTS",
-  3945020480: "IFCRELCONNECTSPATHELEMENTS",
-  4201705270: "IFCRELCONNECTSPORTTOELEMENT",
-  3190031847: "IFCRELCONNECTSPORTS",
-  2127690289: "IFCRELCONNECTSSTRUCTURALACTIVITY",
-  1638771189: "IFCRELCONNECTSSTRUCTURALMEMBER",
-  504942748: "IFCRELCONNECTSWITHECCENTRICITY",
-  3678494232: "IFCRELCONNECTSWITHREALIZINGELEMENTS",
-  3242617779: "IFCRELCONTAINEDINSPATIALSTRUCTURE",
-  886880790: "IFCRELCOVERSBLDGELEMENTS",
-  2802773753: "IFCRELCOVERSSPACES",
-  2565941209: "IFCRELDECLARES",
-  2551354335: "IFCRELDECOMPOSES",
-  693640335: "IFCRELDEFINES",
-  1462361463: "IFCRELDEFINESBYOBJECT",
-  4186316022: "IFCRELDEFINESBYPROPERTIES",
-  307848117: "IFCRELDEFINESBYTEMPLATE",
-  781010003: "IFCRELDEFINESBYTYPE",
-  3940055652: "IFCRELFILLSELEMENT",
-  279856033: "IFCRELFLOWCONTROLELEMENTS",
-  427948657: "IFCRELINTERFERESELEMENTS",
-  3268803585: "IFCRELNESTS",
-  1441486842: "IFCRELPOSITIONS",
-  750771296: "IFCRELPROJECTSELEMENT",
-  1245217292: "IFCRELREFERENCEDINSPATIALSTRUCTURE",
-  4122056220: "IFCRELSEQUENCE",
-  366585022: "IFCRELSERVICESBUILDINGS",
-  3451746338: "IFCRELSPACEBOUNDARY",
-  3523091289: "IFCRELSPACEBOUNDARY1STLEVEL",
-  1521410863: "IFCRELSPACEBOUNDARY2NDLEVEL",
-  1401173127: "IFCRELVOIDSELEMENT",
-  478536968: "IFCRELATIONSHIP",
-  816062949: "IFCREPARAMETRISEDCOMPOSITECURVESEGMENT",
-  1076942058: "IFCREPRESENTATION",
-  3377609919: "IFCREPRESENTATIONCONTEXT",
-  3008791417: "IFCREPRESENTATIONITEM",
-  1660063152: "IFCREPRESENTATIONMAP",
-  2914609552: "IFCRESOURCE",
-  2943643501: "IFCRESOURCEAPPROVALRELATIONSHIP",
-  1608871552: "IFCRESOURCECONSTRAINTRELATIONSHIP",
-  2439245199: "IFCRESOURCELEVELRELATIONSHIP",
-  1042787934: "IFCRESOURCETIME",
-  1856042241: "IFCREVOLVEDAREASOLID",
-  3243963512: "IFCREVOLVEDAREASOLIDTAPERED",
-  4158566097: "IFCRIGHTCIRCULARCONE",
-  3626867408: "IFCRIGHTCIRCULARCYLINDER",
-  2016517767: "IFCROOF",
-  2781568857: "IFCROOFTYPE",
-  2341007311: "IFCROOT",
-  2778083089: "IFCROUNDEDRECTANGLEPROFILEDEF",
-  448429030: "IFCSIUNIT",
-  3053780830: "IFCSANITARYTERMINAL",
-  1768891740: "IFCSANITARYTERMINALTYPE",
-  1054537805: "IFCSCHEDULINGTIME",
-  2157484638: "IFCSEAMCURVE",
-  2042790032: "IFCSECTIONPROPERTIES",
-  4165799628: "IFCSECTIONREINFORCEMENTPROPERTIES",
-  1862484736: "IFCSECTIONEDSOLID",
-  1290935644: "IFCSECTIONEDSOLIDHORIZONTAL",
-  1509187699: "IFCSECTIONEDSPINE",
-  4086658281: "IFCSENSOR",
-  1783015770: "IFCSENSORTYPE",
-  1329646415: "IFCSHADINGDEVICE",
-  4074543187: "IFCSHADINGDEVICETYPE",
-  867548509: "IFCSHAPEASPECT",
-  3982875396: "IFCSHAPEMODEL",
-  4240577450: "IFCSHAPEREPRESENTATION",
-  4124623270: "IFCSHELLBASEDSURFACEMODEL",
-  3692461612: "IFCSIMPLEPROPERTY",
-  3663146110: "IFCSIMPLEPROPERTYTEMPLATE",
-  4097777520: "IFCSITE",
-  1529196076: "IFCSLAB",
-  3127900445: "IFCSLABELEMENTEDCASE",
-  3027962421: "IFCSLABSTANDARDCASE",
-  2533589738: "IFCSLABTYPE",
-  2609359061: "IFCSLIPPAGECONNECTIONCONDITION",
-  3420628829: "IFCSOLARDEVICE",
-  1072016465: "IFCSOLARDEVICETYPE",
-  723233188: "IFCSOLIDMODEL",
-  3856911033: "IFCSPACE",
-  1999602285: "IFCSPACEHEATER",
-  1305183839: "IFCSPACEHEATERTYPE",
-  3812236995: "IFCSPACETYPE",
-  1412071761: "IFCSPATIALELEMENT",
-  710998568: "IFCSPATIALELEMENTTYPE",
-  2706606064: "IFCSPATIALSTRUCTUREELEMENT",
-  3893378262: "IFCSPATIALSTRUCTUREELEMENTTYPE",
-  463610769: "IFCSPATIALZONE",
-  2481509218: "IFCSPATIALZONETYPE",
-  451544542: "IFCSPHERE",
-  4015995234: "IFCSPHERICALSURFACE",
-  1404847402: "IFCSTACKTERMINAL",
-  3112655638: "IFCSTACKTERMINALTYPE",
-  331165859: "IFCSTAIR",
-  4252922144: "IFCSTAIRFLIGHT",
-  1039846685: "IFCSTAIRFLIGHTTYPE",
-  338393293: "IFCSTAIRTYPE",
-  682877961: "IFCSTRUCTURALACTION",
-  3544373492: "IFCSTRUCTURALACTIVITY",
-  2515109513: "IFCSTRUCTURALANALYSISMODEL",
-  1179482911: "IFCSTRUCTURALCONNECTION",
-  2273995522: "IFCSTRUCTURALCONNECTIONCONDITION",
-  1004757350: "IFCSTRUCTURALCURVEACTION",
-  4243806635: "IFCSTRUCTURALCURVECONNECTION",
-  214636428: "IFCSTRUCTURALCURVEMEMBER",
-  2445595289: "IFCSTRUCTURALCURVEMEMBERVARYING",
-  2757150158: "IFCSTRUCTURALCURVEREACTION",
-  3136571912: "IFCSTRUCTURALITEM",
-  1807405624: "IFCSTRUCTURALLINEARACTION",
-  2162789131: "IFCSTRUCTURALLOAD",
-  385403989: "IFCSTRUCTURALLOADCASE",
-  3478079324: "IFCSTRUCTURALLOADCONFIGURATION",
-  1252848954: "IFCSTRUCTURALLOADGROUP",
-  1595516126: "IFCSTRUCTURALLOADLINEARFORCE",
-  609421318: "IFCSTRUCTURALLOADORRESULT",
-  2668620305: "IFCSTRUCTURALLOADPLANARFORCE",
-  2473145415: "IFCSTRUCTURALLOADSINGLEDISPLACEMENT",
-  1973038258: "IFCSTRUCTURALLOADSINGLEDISPLACEMENTDISTORTION",
-  1597423693: "IFCSTRUCTURALLOADSINGLEFORCE",
-  1190533807: "IFCSTRUCTURALLOADSINGLEFORCEWARPING",
-  2525727697: "IFCSTRUCTURALLOADSTATIC",
-  3408363356: "IFCSTRUCTURALLOADTEMPERATURE",
-  530289379: "IFCSTRUCTURALMEMBER",
-  1621171031: "IFCSTRUCTURALPLANARACTION",
-  2082059205: "IFCSTRUCTURALPOINTACTION",
-  734778138: "IFCSTRUCTURALPOINTCONNECTION",
-  1235345126: "IFCSTRUCTURALPOINTREACTION",
-  3689010777: "IFCSTRUCTURALREACTION",
-  2986769608: "IFCSTRUCTURALRESULTGROUP",
-  3657597509: "IFCSTRUCTURALSURFACEACTION",
-  1975003073: "IFCSTRUCTURALSURFACECONNECTION",
-  3979015343: "IFCSTRUCTURALSURFACEMEMBER",
-  2218152070: "IFCSTRUCTURALSURFACEMEMBERVARYING",
-  603775116: "IFCSTRUCTURALSURFACEREACTION",
-  2830218821: "IFCSTYLEMODEL",
-  3958052878: "IFCSTYLEDITEM",
-  3049322572: "IFCSTYLEDREPRESENTATION",
-  148013059: "IFCSUBCONTRACTRESOURCE",
-  4095615324: "IFCSUBCONTRACTRESOURCETYPE",
-  2233826070: "IFCSUBEDGE",
-  2513912981: "IFCSURFACE",
-  699246055: "IFCSURFACECURVE",
-  2028607225: "IFCSURFACECURVESWEPTAREASOLID",
-  3101698114: "IFCSURFACEFEATURE",
-  2809605785: "IFCSURFACEOFLINEAREXTRUSION",
-  4124788165: "IFCSURFACEOFREVOLUTION",
-  2934153892: "IFCSURFACEREINFORCEMENTAREA",
-  1300840506: "IFCSURFACESTYLE",
-  3303107099: "IFCSURFACESTYLELIGHTING",
-  1607154358: "IFCSURFACESTYLEREFRACTION",
-  1878645084: "IFCSURFACESTYLERENDERING",
-  846575682: "IFCSURFACESTYLESHADING",
-  1351298697: "IFCSURFACESTYLEWITHTEXTURES",
-  626085974: "IFCSURFACETEXTURE",
-  2247615214: "IFCSWEPTAREASOLID",
-  1260650574: "IFCSWEPTDISKSOLID",
-  1096409881: "IFCSWEPTDISKSOLIDPOLYGONAL",
-  230924584: "IFCSWEPTSURFACE",
-  1162798199: "IFCSWITCHINGDEVICE",
-  2315554128: "IFCSWITCHINGDEVICETYPE",
-  2254336722: "IFCSYSTEM",
-  413509423: "IFCSYSTEMFURNITUREELEMENT",
-  1580310250: "IFCSYSTEMFURNITUREELEMENTTYPE",
-  3071757647: "IFCTSHAPEPROFILEDEF",
-  985171141: "IFCTABLE",
-  2043862942: "IFCTABLECOLUMN",
-  531007025: "IFCTABLEROW",
-  812556717: "IFCTANK",
-  5716631: "IFCTANKTYPE",
-  3473067441: "IFCTASK",
-  1549132990: "IFCTASKTIME",
-  2771591690: "IFCTASKTIMERECURRING",
-  3206491090: "IFCTASKTYPE",
-  912023232: "IFCTELECOMADDRESS",
-  3824725483: "IFCTENDON",
-  2347447852: "IFCTENDONANCHOR",
-  3081323446: "IFCTENDONANCHORTYPE",
-  3663046924: "IFCTENDONCONDUIT",
-  2281632017: "IFCTENDONCONDUITTYPE",
-  2415094496: "IFCTENDONTYPE",
-  2387106220: "IFCTESSELLATEDFACESET",
-  901063453: "IFCTESSELLATEDITEM",
-  4282788508: "IFCTEXTLITERAL",
-  3124975700: "IFCTEXTLITERALWITHEXTENT",
-  1447204868: "IFCTEXTSTYLE",
-  1983826977: "IFCTEXTSTYLEFONTMODEL",
-  2636378356: "IFCTEXTSTYLEFORDEFINEDFONT",
-  1640371178: "IFCTEXTSTYLETEXTMODEL",
-  280115917: "IFCTEXTURECOORDINATE",
-  1742049831: "IFCTEXTURECOORDINATEGENERATOR",
-  2552916305: "IFCTEXTUREMAP",
-  1210645708: "IFCTEXTUREVERTEX",
-  3611470254: "IFCTEXTUREVERTEXLIST",
-  1199560280: "IFCTIMEPERIOD",
-  3101149627: "IFCTIMESERIES",
-  581633288: "IFCTIMESERIESVALUE",
-  1377556343: "IFCTOPOLOGICALREPRESENTATIONITEM",
-  1735638870: "IFCTOPOLOGYREPRESENTATION",
-  1935646853: "IFCTOROIDALSURFACE",
-  3825984169: "IFCTRANSFORMER",
-  1692211062: "IFCTRANSFORMERTYPE",
-  2595432518: "IFCTRANSITIONCURVESEGMENT2D",
-  1620046519: "IFCTRANSPORTELEMENT",
-  2097647324: "IFCTRANSPORTELEMENTTYPE",
-  2715220739: "IFCTRAPEZIUMPROFILEDEF",
-  2916149573: "IFCTRIANGULATEDFACESET",
-  1229763772: "IFCTRIANGULATEDIRREGULARNETWORK",
-  3593883385: "IFCTRIMMEDCURVE",
-  3026737570: "IFCTUBEBUNDLE",
-  1600972822: "IFCTUBEBUNDLETYPE",
-  1628702193: "IFCTYPEOBJECT",
-  3736923433: "IFCTYPEPROCESS",
-  2347495698: "IFCTYPEPRODUCT",
-  3698973494: "IFCTYPERESOURCE",
-  427810014: "IFCUSHAPEPROFILEDEF",
-  180925521: "IFCUNITASSIGNMENT",
-  630975310: "IFCUNITARYCONTROLELEMENT",
-  3179687236: "IFCUNITARYCONTROLELEMENTTYPE",
-  4292641817: "IFCUNITARYEQUIPMENT",
-  1911125066: "IFCUNITARYEQUIPMENTTYPE",
-  4207607924: "IFCVALVE",
-  728799441: "IFCVALVETYPE",
-  1417489154: "IFCVECTOR",
-  2799835756: "IFCVERTEX",
-  2759199220: "IFCVERTEXLOOP",
-  1907098498: "IFCVERTEXPOINT",
-  1530820697: "IFCVIBRATIONDAMPER",
-  3956297820: "IFCVIBRATIONDAMPERTYPE",
-  2391383451: "IFCVIBRATIONISOLATOR",
-  3313531582: "IFCVIBRATIONISOLATORTYPE",
-  2769231204: "IFCVIRTUALELEMENT",
-  891718957: "IFCVIRTUALGRIDINTERSECTION",
-  926996030: "IFCVOIDINGFEATURE",
-  2391406946: "IFCWALL",
-  4156078855: "IFCWALLELEMENTEDCASE",
-  3512223829: "IFCWALLSTANDARDCASE",
-  1898987631: "IFCWALLTYPE",
-  4237592921: "IFCWASTETERMINAL",
-  1133259667: "IFCWASTETERMINALTYPE",
-  3304561284: "IFCWINDOW",
-  336235671: "IFCWINDOWLININGPROPERTIES",
-  512836454: "IFCWINDOWPANELPROPERTIES",
-  486154966: "IFCWINDOWSTANDARDCASE",
-  1299126871: "IFCWINDOWSTYLE",
-  4009809668: "IFCWINDOWTYPE",
-  4088093105: "IFCWORKCALENDAR",
-  1028945134: "IFCWORKCONTROL",
-  4218914973: "IFCWORKPLAN",
-  3342526732: "IFCWORKSCHEDULE",
-  1236880293: "IFCWORKTIME",
-  2543172580: "IFCZSHAPEPROFILEDEF",
-  1033361043: "IFCZONE",
-};
-
-class JSONPropertyManager extends BasePropertyManager {
-
-  async getItemProperties(modelID, id, recursive = false) {
-    return {
-      ...this.state.models[modelID].jsonData[id]
-    };
-  }
-
-  async getSpatialStructure(modelID, includeProperties) {
-    const chunks = await this.getSpatialTreeChunks(modelID);
-    const projectsIDs = await this.getAllItemsOfType(modelID, IFCPROJECT, false);
-    const projectID = projectsIDs[0];
-    const project = JSONPropertyManager.newIfcProject(projectID);
-    await this.getSpatialNode(modelID, project, chunks, includeProperties);
-    return {
-      ...project
-    };
-  }
-
-  async getAllItemsOfType(modelID, type, verbose) {
-    const data = this.state.models[modelID].jsonData;
-    const typeName = IfcTypesMap[type];
-    if (!typeName) {
-      throw new Error(`Type not found: ${type}`);
-    }
-    return this.filterItemsByType(data, typeName, verbose);
-  }
-
-  async getProperty(modelID, elementID, recursive = false, propName) {
-    const resultIDs = await this.getAllRelatedItemsOfType(modelID, elementID, propName);
-    const result = this.getItemsByID(modelID, resultIDs);
-    if (recursive) {
-      result.forEach(result => this.getReferencesRecursively(modelID, result));
-    }
-    return result;
-  }
-
-  getNodeType(modelID, id) {
-    return this.state.models[modelID].jsonData[id].type;
-  }
-
-  async getChunks(modelID, chunks, propNames) {
-    const relation = await this.getAllItemsOfType(modelID, propNames.name, true);
-    relation.forEach(rel => {
-      this.saveChunk(chunks, propNames, rel);
-    });
-  }
-
-  filterItemsByType(data, typeName, verbose) {
-    const result = [];
-    Object.keys(data).forEach(key => {
-      const numKey = parseInt(key);
-      if (data[numKey].type.toUpperCase() === typeName) {
-        result.push(verbose ? {
-          ...data[numKey]
-        } : numKey);
-      }
-    });
-    return result;
-  }
-
-  async getAllRelatedItemsOfType(modelID, id, propNames) {
-    const lines = await this.getAllItemsOfType(modelID, propNames.name, true);
-    const IDs = [];
-    lines.forEach(line => {
-      const isRelated = JSONPropertyManager.isRelated(id, line, propNames);
-      if (isRelated)
-        this.getRelated(line, propNames, IDs);
-    });
-    return IDs;
-  }
-
-  getItemsByID(modelID, ids) {
-    const data = this.state.models[modelID].jsonData;
-    const result = [];
-    ids.forEach(id => result.push({
-      ...data[id]
-    }));
-    return result;
-  }
-
-  getReferencesRecursively(modelID, jsonObject) {
-    if (jsonObject == undefined)
-      return;
-    const keys = Object.keys(jsonObject);
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i];
-      this.getJSONItem(modelID, jsonObject, key);
-    }
-  }
-
-  getJSONItem(modelID, jsonObject, key) {
-    if (Array.isArray(jsonObject[key])) {
-      return this.getMultipleJSONItems(modelID, jsonObject, key);
-    }
-    if (jsonObject[key] && jsonObject[key].type === 5) {
-      jsonObject[key] = this.getItemsByID(modelID, [jsonObject[key].value])[0];
-      this.getReferencesRecursively(modelID, jsonObject[key]);
-    }
-  }
-
-  getMultipleJSONItems(modelID, jsonObject, key) {
-    jsonObject[key] = jsonObject[key].map((item) => {
-      if (item.type === 5) {
-        item = this.getItemsByID(modelID, [item.value])[0];
-        this.getReferencesRecursively(modelID, item);
-      }
-      return item;
-    });
-  }
-
-}
-
-class PropertyManager {
-
-  constructor(state) {
-    this.state = state;
-    this.webIfcProps = new WebIfcPropertyManager(state);
-    this.jsonProps = new JSONPropertyManager(state);
-    this.currentProps = this.webIfcProps;
-  }
-
-  getExpressId(geometry, faceIndex) {
-    if (!geometry.index)
-      throw new Error('Geometry does not have index information.');
-    const geoIndex = geometry.index.array;
-    return geometry.attributes[IdAttrName].getX(geoIndex[3 * faceIndex]);
-  }
-
-  async getItemProperties(modelID, elementID, recursive = false) {
-    this.updateCurrentProps();
-    return this.currentProps.getItemProperties(modelID, elementID, recursive);
-  }
-
-  async getAllItemsOfType(modelID, type, verbose) {
-    this.updateCurrentProps();
-    return this.currentProps.getAllItemsOfType(modelID, type, verbose);
-  }
-
-  async getPropertySets(modelID, elementID, recursive = false) {
-    this.updateCurrentProps();
-    return this.currentProps.getPropertySets(modelID, elementID, recursive);
-  }
-
-  async getTypeProperties(modelID, elementID, recursive = false) {
-    this.updateCurrentProps();
-    return this.currentProps.getTypeProperties(modelID, elementID, recursive);
-  }
-
-  async getMaterialsProperties(modelID, elementID, recursive = false) {
-    this.updateCurrentProps();
-    return this.currentProps.getMaterialsProperties(modelID, elementID, recursive);
-  }
-
-  async getSpatialStructure(modelID, includeProperties) {
-    this.updateCurrentProps();
-    if (!this.state.useJSON && includeProperties) {
-      console.warn('Including properties in getSpatialStructure with the JSON workflow disabled can lead to poor performance.');
-    }
-    return await this.currentProps.getSpatialStructure(modelID, includeProperties);
-  }
-
-  updateCurrentProps() {
-    this.currentProps = this.state.useJSON ? this.jsonProps : this.webIfcProps;
-  }
-
-}
-
-class TypeManager {
-
-  constructor(state) {
-    this.state = state;
-    this.state = state;
-  }
-
-  async getAllTypes(worker) {
-    for (let modelID in this.state.models) {
-      if (this.state.models.hasOwnProperty(modelID)) {
-        const types = this.state.models[modelID].types;
-        if (Object.keys(types).length == 0) {
-          await this.getAllTypesOfModel(parseInt(modelID), worker);
-        }
-      }
-    }
-  }
-
-  async getAllTypesOfModel(modelID, worker) {
-    const result = {};
-    const elements = Object.keys(IfcElements).map((e) => parseInt(e));
-    for (let i = 0; i < elements.length; i++) {
-      const element = elements[i];
-      const lines = await this.state.api.GetLineIDsWithType(modelID, element);
-      const size = lines.size();
-      for (let i = 0; i < size; i++)
-        result[lines.get(i)] = element;
-    }
-    if (this.state.worker.active && worker) {
-      await worker.workerState.updateModelStateTypes(modelID, result);
-    }
-    this.state.models[modelID].types = result;
-  }
-
-}
-
-class BvhManager {
-
-  initializeMeshBVH(computeBoundsTree, disposeBoundsTree, acceleratedRaycast) {
-    this.computeBoundsTree = computeBoundsTree;
-    this.disposeBoundsTree = disposeBoundsTree;
-    this.acceleratedRaycast = acceleratedRaycast;
-    this.setupThreeMeshBVH();
-  }
-
-  applyThreeMeshBVH(geometry) {
-    if (this.computeBoundsTree)
-      geometry.computeBoundsTree();
-  }
-
-  setupThreeMeshBVH() {
-    if (!this.computeBoundsTree || !this.disposeBoundsTree || !this.acceleratedRaycast)
-      return;
-    BufferGeometry.prototype.computeBoundsTree = this.computeBoundsTree;
-    BufferGeometry.prototype.disposeBoundsTree = this.disposeBoundsTree;
-    Mesh.prototype.raycast = this.acceleratedRaycast;
-  }
-
-}
-
-var WorkerActions;
-(function(WorkerActions) {
-  WorkerActions["updateStateUseJson"] = "updateStateUseJson";
-  WorkerActions["updateStateWebIfcSettings"] = "updateStateWebIfcSettings";
-  WorkerActions["updateModelStateTypes"] = "updateModelStateTypes";
-  WorkerActions["updateModelStateJsonData"] = "updateModelStateJsonData";
-  WorkerActions["loadJsonDataFromWorker"] = "loadJsonDataFromWorker";
-  WorkerActions["dispose"] = "dispose";
-  WorkerActions["Close"] = "Close";
-  WorkerActions["DisposeWebIfc"] = "DisposeWebIfc";
-  WorkerActions["Init"] = "Init";
-  WorkerActions["OpenModel"] = "OpenModel";
-  WorkerActions["CreateModel"] = "CreateModel";
-  WorkerActions["ExportFileAsIFC"] = "ExportFileAsIFC";
-  WorkerActions["GetGeometry"] = "GetGeometry";
-  WorkerActions["GetLine"] = "GetLine";
-  WorkerActions["GetAndClearErrors"] = "GetAndClearErrors";
-  WorkerActions["WriteLine"] = "WriteLine";
-  WorkerActions["FlattenLine"] = "FlattenLine";
-  WorkerActions["GetRawLineData"] = "GetRawLineData";
-  WorkerActions["WriteRawLineData"] = "WriteRawLineData";
-  WorkerActions["GetLineIDsWithType"] = "GetLineIDsWithType";
-  WorkerActions["GetAllLines"] = "GetAllLines";
-  WorkerActions["SetGeometryTransformation"] = "SetGeometryTransformation";
-  WorkerActions["GetCoordinationMatrix"] = "GetCoordinationMatrix";
-  WorkerActions["GetVertexArray"] = "GetVertexArray";
-  WorkerActions["GetIndexArray"] = "GetIndexArray";
-  WorkerActions["getSubArray"] = "getSubArray";
-  WorkerActions["CloseModel"] = "CloseModel";
-  WorkerActions["StreamAllMeshes"] = "StreamAllMeshes";
-  WorkerActions["StreamAllMeshesWithTypes"] = "StreamAllMeshesWithTypes";
-  WorkerActions["IsModelOpen"] = "IsModelOpen";
-  WorkerActions["LoadAllGeometry"] = "LoadAllGeometry";
-  WorkerActions["GetFlatMesh"] = "GetFlatMesh";
-  WorkerActions["SetWasmPath"] = "SetWasmPath";
-  WorkerActions["parse"] = "parse";
-  WorkerActions["setupOptionalCategories"] = "setupOptionalCategories";
-  WorkerActions["getExpressId"] = "getExpressId";
-  WorkerActions["initializeProperties"] = "initializeProperties";
-  WorkerActions["getAllItemsOfType"] = "getAllItemsOfType";
-  WorkerActions["getItemProperties"] = "getItemProperties";
-  WorkerActions["getMaterialsProperties"] = "getMaterialsProperties";
-  WorkerActions["getPropertySets"] = "getPropertySets";
-  WorkerActions["getSpatialStructure"] = "getSpatialStructure";
-  WorkerActions["getTypeProperties"] = "getTypeProperties";
-})(WorkerActions || (WorkerActions = {}));
-var WorkerAPIs;
-(function(WorkerAPIs) {
-  WorkerAPIs["workerState"] = "workerState";
-  WorkerAPIs["webIfc"] = "webIfc";
-  WorkerAPIs["properties"] = "properties";
-  WorkerAPIs["parser"] = "parser";
-})(WorkerAPIs || (WorkerAPIs = {}));
-
-class Vector {
-
-  constructor(vector) {
-    this._data = {};
-    this._size = vector.size;
-    const keys = Object.keys(vector).filter((key) => key.indexOf('size') === -1).map(key => parseInt(key));
-    keys.forEach((key) => this._data[key] = vector[key]);
-  }
-
-  size() {
-    return this._size;
-  }
-
-  get(index) {
-    return this._data[index];
-  }
-
-}
-
-class IfcGeometry {
-
-  constructor(vector) {
-    this._GetVertexData = vector.GetVertexData;
-    this._GetVertexDataSize = vector.GetVertexDataSize;
-    this._GetIndexData = vector.GetIndexData;
-    this._GetIndexDataSize = vector.GetIndexDataSize;
-  }
-
-  GetVertexData() {
-    return this._GetVertexData;
-  }
-
-  GetVertexDataSize() {
-    return this._GetVertexDataSize;
-  }
-
-  GetIndexData() {
-    return this._GetIndexData;
-  }
-
-  GetIndexDataSize() {
-    return this._GetIndexDataSize;
-  }
-
-}
-
-class FlatMesh {
-
-  constructor(serializer, flatMesh) {
-    this.expressID = flatMesh.expressID;
-    this.geometries = serializer.reconstructVector(flatMesh.geometries);
-  }
-
-}
-
-class FlatMeshVector {
-
-  constructor(serializer, vector) {
-    this._data = {};
-    this._size = vector.size;
-    const keys = Object.keys(vector).filter((key) => key.indexOf('size') === -1).map(key => parseInt(key));
-    keys.forEach(key => this._data[key] = serializer.reconstructFlatMesh(vector[key]));
-  }
-
-  size() {
-    return this._size;
-  }
-
-  get(index) {
-    return this._data[index];
-  }
-
-}
-
-class SerializedMaterial {
-
-  constructor(material) {
-    this.color = [material.color.r, material.color.g, material.color.b];
-    this.opacity = material.opacity;
-    this.transparent = material.transparent;
-  }
-
-}
-
-class MaterialReconstructor {
-
-  static new(material) {
-    return new MeshLambertMaterial({
-      color: new Color(material.color[0], material.color[1], material.color[2]),
-      opacity: material.opacity,
-      transparent: material.transparent,
-      side: DoubleSide
-    });
-  }
-
-}
-
-class SerializedGeometry {
-
-  constructor(geometry) {
-    var _a,
-      _b,
-      _c,
-      _d;
-    this.position = ((_a = geometry.attributes.position) === null || _a === void 0 ? void 0 : _a.array) || [];
-    this.normal = ((_b = geometry.attributes.normal) === null || _b === void 0 ? void 0 : _b.array) || [];
-    this.expressID = ((_c = geometry.attributes.expressID) === null || _c === void 0 ? void 0 : _c.array) || [];
-    this.index = ((_d = geometry.index) === null || _d === void 0 ? void 0 : _d.array) || [];
-    this.groups = geometry.groups;
-  }
-
-}
-
-class GeometryReconstructor {
-
-  static new(serialized) {
-    const geom = new BufferGeometry();
-    GeometryReconstructor.set(geom, 'expressID', new Uint32Array(serialized.expressID), 1);
-    GeometryReconstructor.set(geom, 'position', new Float32Array(serialized.position), 3);
-    GeometryReconstructor.set(geom, 'normal', new Float32Array(serialized.normal), 3);
-    geom.setIndex(Array. from (serialized.index));
-    geom.groups = serialized.groups;
-    return geom;
-  }
-
-  static set(geom, name, data, size) {
-    if (data.length > 0) {
-      geom.setAttribute(name, new BufferAttribute(data, size));
-    }
-  }
-
-}
-
-class SerializedMesh {
-
-  constructor(model) {
-    this.materials = [];
-    this.modelID = model.modelID;
-    this.geometry = new SerializedGeometry(model.geometry);
-    if (Array.isArray(model.material)) {
-      model.material.forEach(mat => {
-        this.materials.push(new SerializedMaterial(mat));
-      });
-    } else {
-      this.materials.push(new SerializedMaterial(model.material));
-    }
-  }
-
-}
-
-class MeshReconstructor {
-
-  static new(serialized) {
-    const model = new IFCModel();
-    model.modelID = serialized.modelID;
-    model.geometry = GeometryReconstructor.new(serialized.geometry);
-    MeshReconstructor.getMaterials(serialized, model);
-    return model;
-  }
-
-  static getMaterials(serialized, model) {
-    model.material = [];
-    const mats = model.material;
-    serialized.materials.forEach(mat => {
-      mats.push(MaterialReconstructor.new(mat));
-    });
-  }
-
-}
-
-class Serializer {
-
-  serializeVector(vector) {
-    const size = vector.size();
-    const serialized = {
-      size
-    };
-    for (let i = 0; i < size; i++) {
-      serialized[i] = vector.get(i);
-    }
-    return serialized;
-  }
-
-  reconstructVector(vector) {
-    return new Vector(vector);
-  }
-
-  serializeIfcGeometry(geometry) {
-    const GetVertexData = geometry.GetVertexData();
-    const GetVertexDataSize = geometry.GetVertexDataSize();
-    const GetIndexData = geometry.GetIndexData();
-    const GetIndexDataSize = geometry.GetIndexDataSize();
-    return {
-      GetVertexData,
-      GetVertexDataSize,
-      GetIndexData,
-      GetIndexDataSize
-    };
-  }
-
-  reconstructIfcGeometry(geometry) {
-    return new IfcGeometry(geometry);
-  }
-
-  serializeFlatMesh(flatMesh) {
-    return {
-      expressID: flatMesh.expressID,
-      geometries: this.serializeVector(flatMesh.geometries)
-    };
-  }
-
-  reconstructFlatMesh(flatMesh) {
-    return new FlatMesh(this, flatMesh);
-  }
-
-  serializeFlatMeshVector(vector) {
-    const size = vector.size();
-    const serialized = {
-      size
-    };
-    for (let i = 0; i < size; i++) {
-      const flatMesh = vector.get(i);
-      serialized[i] = this.serializeFlatMesh(flatMesh);
-    }
-    return serialized;
-  }
-
-  reconstructFlatMeshVector(vector) {
-    return new FlatMeshVector(this, vector);
-  }
-
-  serializeIfcModel(model) {
-    return new SerializedMesh(model);
-  }
-
-  reconstructIfcModel(model) {
-    return MeshReconstructor.new(model);
-  }
-
-}
-
-class PropertyHandler {
-
-  constructor(handler) {
-    this.handler = handler;
-    this.API = WorkerAPIs.properties;
-  }
-
-  getExpressId(geometry, faceIndex) {
-    if (!geometry.index)
-      throw new Error('Geometry does not have index information.');
-    const geoIndex = geometry.index.array;
-    return geometry.attributes[IdAttrName].getX(geoIndex[3 * faceIndex]);
-  }
-
-  getAllItemsOfType(modelID, type, verbose) {
-    return this.handler.request(this.API, WorkerActions.getAllItemsOfType, {
-      modelID,
-      type,
-      verbose
-    });
-  }
-
-  getItemProperties(modelID, elementID, recursive) {
-    return this.handler.request(this.API, WorkerActions.getItemProperties, {
-      modelID,
-      elementID,
-      recursive
-    });
-  }
-
-  getMaterialsProperties(modelID, elementID, recursive) {
-    return this.handler.request(this.API, WorkerActions.getMaterialsProperties, {
-      modelID,
-      elementID,
-      recursive
-    });
-  }
-
-  getPropertySets(modelID, elementID, recursive) {
-    return this.handler.request(this.API, WorkerActions.getPropertySets, {
-      modelID,
-      elementID,
-      recursive
-    });
-  }
-
-  getTypeProperties(modelID, elementID, recursive) {
-    return this.handler.request(this.API, WorkerActions.getTypeProperties, {
-      modelID,
-      elementID,
-      recursive
-    });
-  }
-
-  getSpatialStructure(modelID, includeProperties) {
-    return this.handler.request(this.API, WorkerActions.getSpatialStructure, {
-      modelID,
-      includeProperties
-    });
-  }
-
-}
-
-class WebIfcHandler {
-
-  constructor(handler, serializer) {
-    this.handler = handler;
-    this.serializer = serializer;
-    this.API = WorkerAPIs.webIfc;
-  }
-
-  async Init() {
-    this.wasmModule = true;
-    return this.handler.request(this.API, WorkerActions.Init);
-  }
-
-  async OpenModel(data, settings) {
-    return this.handler.request(this.API, WorkerActions.OpenModel, {
-      data,
-      settings
-    });
-  }
-
-  async CreateModel(settings) {
-    return this.handler.request(this.API, WorkerActions.CreateModel, {
-      settings
-    });
-  }
-
-  async ExportFileAsIFC(modelID) {
-    return this.handler.request(this.API, WorkerActions.ExportFileAsIFC, {
-      modelID
-    });
-  }
-
-  async GetGeometry(modelID, geometryExpressID) {
-    this.handler.serializeHandlers[this.handler.requestID] = (geom) => {
-      return this.serializer.reconstructIfcGeometry(geom);
-    };
-    return this.handler.request(this.API, WorkerActions.GetGeometry, {
-      modelID,
-      geometryExpressID
-    });
-  }
-
-  async GetLine(modelID, expressID, flatten) {
-    return this.handler.request(this.API, WorkerActions.GetLine, {
-      modelID,
-      expressID,
-      flatten
-    });
-  }
-
-  async GetAndClearErrors(modelID) {
-    this.handler.serializeHandlers[this.handler.requestID] = (vector) => {
-      return this.serializer.reconstructVector(vector);
-    };
-    return this.handler.request(this.API, WorkerActions.GetAndClearErrors, {
-      modelID
-    });
-  }
-
-  async WriteLine(modelID, lineObject) {
-    return this.handler.request(this.API, WorkerActions.WriteLine, {
-      modelID,
-      lineObject
-    });
-  }
-
-  async FlattenLine(modelID, line) {
-    return this.handler.request(this.API, WorkerActions.FlattenLine, {
-      modelID,
-      line
-    });
-  }
-
-  async GetRawLineData(modelID, expressID) {
-    return this.handler.request(this.API, WorkerActions.GetRawLineData, {
-      modelID,
-      expressID
-    });
-  }
-
-  async WriteRawLineData(modelID, data) {
-    return this.handler.request(this.API, WorkerActions.WriteRawLineData, {
-      modelID,
-      data
-    });
-  }
-
-  async GetLineIDsWithType(modelID, type) {
-    this.handler.serializeHandlers[this.handler.requestID] = (vector) => {
-      return this.serializer.reconstructVector(vector);
-    };
-    return this.handler.request(this.API, WorkerActions.GetLineIDsWithType, {
-      modelID,
-      type
-    });
-  }
-
-  async GetAllLines(modelID) {
-    this.handler.serializeHandlers[this.handler.requestID] = (vector) => {
-      return this.serializer.reconstructVector(vector);
-    };
-    return this.handler.request(this.API, WorkerActions.GetAllLines, {
-      modelID
-    });
-  }
-
-  async SetGeometryTransformation(modelID, transformationMatrix) {
-    return this.handler.request(this.API, WorkerActions.SetGeometryTransformation, {
-      modelID,
-      transformationMatrix
-    });
-  }
-
-  async GetCoordinationMatrix(modelID) {
-    return this.handler.request(this.API, WorkerActions.GetCoordinationMatrix, {
-      modelID
-    });
-  }
-
-  async GetVertexArray(ptr, size) {
-    return this.handler.request(this.API, WorkerActions.GetVertexArray, {
-      ptr,
-      size
-    });
-  }
-
-  async GetIndexArray(ptr, size) {
-    return this.handler.request(this.API, WorkerActions.GetIndexArray, {
-      ptr,
-      size
-    });
-  }
-
-  async getSubArray(heap, startPtr, sizeBytes) {
-    return this.handler.request(this.API, WorkerActions.getSubArray, {
-      heap,
-      startPtr,
-      sizeBytes
-    });
-  }
-
-  async CloseModel(modelID) {
-    return this.handler.request(this.API, WorkerActions.CloseModel, {
-      modelID
-    });
-  }
-
-  async StreamAllMeshes(modelID, meshCallback) {
-    this.handler.callbackHandlers[this.handler.requestID] = {
-      action: meshCallback,
-      serializer: this.serializer.reconstructFlatMesh
-    };
-    return this.handler.request(this.API, WorkerActions.StreamAllMeshes, {
-      modelID
-    });
-  }
-
-  async StreamAllMeshesWithTypes(modelID, types, meshCallback) {
-    this.handler.callbackHandlers[this.handler.requestID] = {
-      action: meshCallback,
-      serializer: this.serializer.reconstructFlatMesh
-    };
-    return this.handler.request(this.API, WorkerActions.StreamAllMeshesWithTypes, {
-      modelID,
-      types
-    });
-  }
-
-  async IsModelOpen(modelID) {
-    return this.handler.request(this.API, WorkerActions.IsModelOpen, {
-      modelID
-    });
-  }
-
-  async LoadAllGeometry(modelID) {
-    this.handler.serializeHandlers[this.handler.requestID] = (vector) => {
-      return this.serializer.reconstructFlatMeshVector(vector);
-    };
-    return this.handler.request(this.API, WorkerActions.LoadAllGeometry, {
-      modelID
-    });
-  }
-
-  async GetFlatMesh(modelID, expressID) {
-    this.handler.serializeHandlers[this.handler.requestID] = (flatMesh) => {
-      return this.serializer.reconstructFlatMesh(flatMesh);
-    };
-    return this.handler.request(this.API, WorkerActions.GetFlatMesh, {
-      modelID,
-      expressID
-    });
-  }
-
-  async SetWasmPath(path) {
-    return this.handler.request(this.API, WorkerActions.SetWasmPath, {
-      path
-    });
-  }
-
-}
-
-class WorkerStateHandler {
-
-  constructor(handler) {
-    this.handler = handler;
-    this.API = WorkerAPIs.workerState;
-    this.state = this.handler.state;
-  }
-
-  async updateStateUseJson() {
-    const useJson = this.state.useJSON;
-    return this.handler.request(this.API, WorkerActions.updateStateUseJson, {
-      useJson
-    });
-  }
-
-  async updateStateWebIfcSettings() {
-    const webIfcSettings = this.state.webIfcSettings;
-    return this.handler.request(this.API, WorkerActions.updateStateWebIfcSettings, {
-      webIfcSettings
-    });
-  }
-
-  async updateModelStateTypes(modelID, types) {
-    return this.handler.request(this.API, WorkerActions.updateModelStateTypes, {
-      modelID,
-      types
-    });
-  }
-
-  async updateModelStateJsonData(modelID, jsonData) {
-    return this.handler.request(this.API, WorkerActions.updateModelStateJsonData, {
-      modelID,
-      jsonData
-    });
-  }
-
-  async loadJsonDataFromWorker(modelID, path) {
-    return this.handler.request(this.API, WorkerActions.loadJsonDataFromWorker, {
-      modelID,
-      path
-    });
-  }
-
-}
-
-var DBOperation;
-(function(DBOperation) {
-  DBOperation[DBOperation["transferIfcModel"] = 0] = "transferIfcModel";
-  DBOperation[DBOperation["transferIndividualItems"] = 1] = "transferIndividualItems";
-})(DBOperation || (DBOperation = {}));
-
-class IndexedDatabase {
-
-  async save(item, id) {
-    const open = IndexedDatabase.openOrCreateDB(id);
-    this.createSchema(open, id);
-    return new Promise((resolve, reject) => {
-      open.onsuccess = () => this.saveItem(item, open, id, resolve);
-    });
-  }
-
-  async load(id) {
-    const open = IndexedDatabase.openOrCreateDB(id);
-    return new Promise((resolve, reject) => {
-      open.onsuccess = () => this.loadItem(open, id, resolve);
-    });
-  }
-
-  createSchema(open, id) {
-    open.onupgradeneeded = function() {
-      const db = open.result;
-      db.createObjectStore(id.toString(), {
-        keyPath: "id"
-      });
-    };
-  }
-
-  saveItem(item, open, id, resolve) {
-    const {db, tx, store} = IndexedDatabase.getDBItems(open, id);
-    item.id = id;
-    store.put(item);
-    tx.oncomplete = () => IndexedDatabase.closeDB(db, tx, resolve);
-  }
-
-  loadItem(open, id, resolve) {
-    const {db, tx, store} = IndexedDatabase.getDBItems(open, id);
-    const item = store.get(id);
-    const callback = () => {
-      delete item.result.id;
-      resolve(item.result);
-    };
-    tx.oncomplete = () => IndexedDatabase.closeDB(db, tx, callback);
-  }
-
-  static getDBItems(open, id) {
-    const db = open.result;
-    const tx = db.transaction(id.toString(), "readwrite");
-    const store = tx.objectStore(id.toString());
-    return {
-      db,
-      tx,
-      store
-    };
-  }
-
-  static openOrCreateDB(id) {
-    return indexedDB.open(id.toString(), 1);
-  }
-
-  static closeDB(db, tx, resolve) {
-    db.close();
-    resolve("success");
-  }
-
-}
-
-class ParserHandler {
-
-  constructor(handler, serializer, BVH, IDB) {
-    this.handler = handler;
-    this.serializer = serializer;
-    this.BVH = BVH;
-    this.IDB = IDB;
-    this.optionalCategories = {
-      [IFCSPACE]: true,
-      [IFCOPENINGELEMENT]: false
-    };
-    this.API = WorkerAPIs.parser;
-  }
-
-  async setupOptionalCategories(config) {
-    this.optionalCategories = config;
-    return this.handler.request(this.API, WorkerActions.setupOptionalCategories, {
-      config
-    });
-  }
-
-  async parse(buffer, coordinationMatrix) {
-    this.handler.onprogressHandlers[this.handler.requestID] = (progress) => {
-      if (this.handler.state.onProgress)
-        this.handler.state.onProgress(progress);
-    };
-    this.handler.serializeHandlers[this.handler.requestID] = async (result) => {
-      this.updateState(result.modelID);
-      return this.getModel();
-    };
-    return this.handler.request(this.API, WorkerActions.parse, {
-      buffer,
-      coordinationMatrix
-    });
-  }
-
-  getAndClearErrors(_modelId) {}
-
-  updateState(modelID) {
-    this.handler.state.models[modelID] = {
-      modelID: modelID,
-      mesh: {},
-      types: {},
-      jsonData: {}
-    };
-  }
-
-  async getModel() {
-    const serializedModel = await this.IDB.load(DBOperation.transferIfcModel);
-    const model = this.serializer.reconstructIfcModel(serializedModel);
-    this.BVH.applyThreeMeshBVH(model.geometry);
-    this.handler.state.models[model.modelID].mesh = model;
-    return model;
-  }
-
-}
-
-class IFCWorkerHandler {
-
-  constructor(state, BVH) {
-    this.state = state;
-    this.BVH = BVH;
-    this.requestID = 0;
-    this.rejectHandlers = {};
-    this.resolveHandlers = {};
-    this.serializeHandlers = {};
-    this.callbackHandlers = {};
-    this.onprogressHandlers = {};
-    this.serializer = new Serializer();
-    this.IDB = new IndexedDatabase();
-    this.workerPath = this.state.worker.path;
-    this.ifcWorker = new Worker(this.workerPath);
-    this.ifcWorker.onmessage = (data) => this.handleResponse(data);
-    this.properties = new PropertyHandler(this);
-    this.parser = new ParserHandler(this, this.serializer, this.BVH, this.IDB);
-    this.webIfc = new WebIfcHandler(this, this.serializer);
-    this.workerState = new WorkerStateHandler(this);
-  }
-
-  request(worker, action, args) {
-    const data = {
-      worker,
-      action,
-      args,
-      id: this.requestID,
-      result: undefined,
-      onProgress: false
-    };
-    return new Promise((resolve, reject) => {
-      this.resolveHandlers[this.requestID] = resolve;
-      this.rejectHandlers[this.requestID] = reject;
-      this.requestID++;
-      this.ifcWorker.postMessage(data);
-    });
-  }
-
-  async terminate() {
-    await this.request(WorkerAPIs.workerState, WorkerActions.dispose);
-    await this.request(WorkerAPIs.webIfc, WorkerActions.DisposeWebIfc);
-    this.ifcWorker.terminate();
-  }
-
-  async Close() {
-    await this.request(WorkerAPIs.webIfc, WorkerActions.Close);
-  }
-
-  handleResponse(event) {
-    const data = event.data;
-    if (data.onProgress) {
-      this.resolveOnProgress(data);
-      return;
-    }
-    this.callHandlers(data);
-    delete this.resolveHandlers[data.id];
-    delete this.rejectHandlers[data.id];
-    delete this.onprogressHandlers[data.id];
-  }
-
-  callHandlers(data) {
-    try {
-      this.resolveSerializations(data);
-      this.resolveCallbacks(data);
-      this.resolveHandlers[data.id](data.result);
-    } catch (error) {
-      this.rejectHandlers[data.id](error);
-    }
-  }
-
-  resolveOnProgress(data) {
-    if (this.onprogressHandlers[data.id]) {
-      data.result = this.onprogressHandlers[data.id](data.result);
-    }
-  }
-
-  resolveSerializations(data) {
-    if (this.serializeHandlers[data.id]) {
-      data.result = this.serializeHandlers[data.id](data.result);
-      delete this.serializeHandlers[data.id];
-    }
-  }
-
-  resolveCallbacks(data) {
-    if (this.callbackHandlers[data.id]) {
-      let callbackParameter = data.result;
-      if (this.callbackHandlers[data.id].serializer) {
-        callbackParameter = this.callbackHandlers[data.id].serializer(data.result);
-      }
-      this.callbackHandlers[data.id].action(callbackParameter);
-    }
-  }
-
-}
-
-class MemoryCleaner {
-
-  constructor(state) {
-    this.state = state;
-  }
-
-  async dispose() {
-    Object.keys(this.state.models).forEach(modelID => {
-      const model = this.state.models[parseInt(modelID, 10)];
-      model.mesh.removeFromParent();
-      const geom = model.mesh.geometry;
-      if (geom.disposeBoundsTree)
-        geom.disposeBoundsTree();
-      geom.dispose();
-      if (!Array.isArray(model.mesh.material))
-        model.mesh.material.dispose();
-      else
-        model.mesh.material.forEach(mat => mat.dispose());
-      model.mesh = null;
-      model.types = null;
-      model.jsonData = null;
-    });
-    this.state.api = null;
-    this.state.models = null;
-  }
-
-}
-
-class IFCUtils {
-
-  constructor(state) {
-    this.state = state;
-    this.map = {};
-  }
-
-  getMapping() {
-    this.map = this.reverseElementMapping(IfcTypesMap);
-  }
-
-  releaseMapping() {
-    this.map = {};
-  }
-
-  reverseElementMapping(obj) {
-    let reverseElement = {};
-    Object.keys(obj).forEach(key => {
-      reverseElement[obj[key]] = key;
-    });
-    return reverseElement;
-  }
-
-  isA(entity, entity_class) {
-    var test = false;
-    if (entity_class) {
-      if (IfcTypesMap[entity.type] === entity_class.toUpperCase()) {
-        test = true;
-      }
-      return test;
-    } else {
-      return IfcTypesMap[entity.type];
-    }
-  }
-
-  async byId(modelID, id) {
-    return this.state.api.GetLine(modelID, id);
-  }
-
-  async idsByType(modelID, entity_class) {
-    this.getMapping();
-    let entities_ids = await this.state.api.GetLineIDsWithType(modelID, Number(this.map[entity_class.toUpperCase()]));
-    this.releaseMapping();
-    return entities_ids;
-  }
-
-  async byType(modelID, entity_class) {
-    let entities_ids = await this.idsByType(modelID, entity_class);
-    if (entities_ids !== null) {
-      this.getMapping();
-      let items = [];
-      for (let i = 0; i < entities_ids.size(); i++) {
-        let entity = await this.byId(modelID, entities_ids.get(i));
-        items.push(entity);
-      }
-      this.releaseMapping();
-      return items;
-    }
-  }
-
-}
-
-class Data {
-
-  constructor(state) {
-    this.state = state;
-    this.isLoaded = false;
-    this.workPlans = {};
-    this.workSchedules = {};
-    this.workCalendars = {};
-    this.workTimes = {};
-    this.recurrencePatterns = {};
-    this.timePeriods = {};
-    this.tasks = {};
-    this.taskTimes = {};
-    this.lagTimes = {};
-    this.sequences = {};
-    this.utils = new IFCUtils(this.state);
-  }
-
-  async load(modelID) {
-    await this.loadTasks(modelID);
-    await this.loadWorkSchedules(modelID);
-    await this.loadWorkCalendars(modelID);
-    await this.loadWorkTimes(modelID);
-    await this.loadTimePeriods(modelID);
-    this.isLoaded = true;
-  }
-
-  async loadWorkSchedules(modelID) {
-    let workSchedules = await this.utils.byType(modelID, "IfcWorkSchedule");
-    for (let i = 0; i < workSchedules.length; i++) {
-      let workSchedule = workSchedules[i];
-      this.workSchedules[workSchedule.expressID] = {
-        "Id": workSchedule.expressID,
-        "Name": workSchedule.Name.value,
-        "Description": ((workSchedule.Description) ? workSchedule.Description.value : ""),
-        "Creators": [],
-        "CreationDate": ((workSchedule.CreationDate) ? workSchedule.CreationDate.value : ""),
-        "StartTime": ((workSchedule.StartTime) ? workSchedule.StartTime.value : ""),
-        "FinishTime": ((workSchedule.FinishTime) ? workSchedule.FinishTime.value : ""),
-        "TotalFloat": ((workSchedule.TotalFloat) ? workSchedule.TotalFloat.value : ""),
-        "RelatedObjects": [],
-      };
-    }
-    this.loadWorkScheduleRelatedObjects(modelID);
-  }
-
-  async loadWorkScheduleRelatedObjects(modelID) {
-    let relsControls = await this.utils.byType(modelID, "IfcRelAssignsToControl");
-    for (let i = 0; i < relsControls.length; i++) {
-      let relControls = relsControls[i];
-      let relatingControl = await this.utils.byId(modelID, relControls.RelatingControl.value);
-      let relatedObjects = relControls.RelatedObjects;
-      if (this.utils.isA(relatingControl, "IfcWorkSchedule")) {
-        for (var objectIndex = 0; objectIndex < relatedObjects.length; objectIndex++) {
-          this.workSchedules[relatingControl.expressID]["RelatedObjects"].push(relatedObjects[objectIndex].value);
-        }
-      }
-    }
-  }
-
-  async loadTasks(modelID) {
-    let tasks = await this.utils.byType(modelID, "IfcTask");
-    for (let i = 0; i < tasks.length; i++) {
-      let task = tasks[i];
-      this.tasks[task.expressID] = {
-        "Id": task.expressID,
-        "Name": ((task.Name) ? task.Name.value : ""),
-        "PredefinedType": ((task.PredefinedType) ? task.PredefinedType.value : ""),
-        "TaskTime": ((task.TaskTime) ? await this.utils.byId(modelID, task.TaskTime.value) : ""),
-        "Identification": ((task.Identification) ? task.Identification.value : ""),
-        "IsMilestone": ((task.IsMilestone) ? task.IsMilestone.value : ""),
-        "IsPredecessorTo": [],
-        "IsSucessorFrom": [],
-        "Inputs": [],
-        "Resources": [],
-        "Outputs": [],
-        "Controls": [],
-        "Nests": [],
-        "IsNestedBy": [],
-        "OperatesOn": [],
-        "HasAssignmentsWorkCalendars": [],
-      };
-    }
-    await this.loadTaskSequence(modelID);
-    await this.loadTaskOutputs(modelID);
-    await this.loadTaskNesting(modelID);
-    await this.loadTaskOperations(modelID);
-    await this.loadAssignementsWorkCalendar(modelID);
-  }
-
-  async loadTaskSequence(modelID) {
-    let relsSequence = await this.utils.idsByType(modelID, "IfcRelSequence");
-    for (let i = 0; i < relsSequence.size(); i++) {
-      let relSequenceId = relsSequence.get(i);
-      if (relSequenceId !== 0) {
-        let relSequence = await this.utils.byId(modelID, relSequenceId);
-        let related_process = relSequence.RelatedProcess.value;
-        let relatingProcess = relSequence.RelatingProcess.value;
-        this.tasks[relatingProcess]["IsPredecessorTo"].push(relSequence.expressID);
-        this.tasks[related_process]["IsSucessorFrom"].push(relSequence.expressID);
-      }
-    }
-  }
-
-  async loadTaskOutputs(modelID) {
-    let rels_assigns_to_product = await this.utils.byType(modelID, "IfcRelAssignsToProduct");
-    for (let i = 0; i < rels_assigns_to_product.length; i++) {
-      let relAssignsToProduct = rels_assigns_to_product[i];
-      let relatedObject = await this.utils.byId(modelID, relAssignsToProduct.RelatedObjects[0].value);
-      if (this.utils.isA(relatedObject, "IfcTask")) {
-        let relatingProduct = await this.utils.byId(modelID, relAssignsToProduct.RelatingProduct.value);
-        this.tasks[relatedObject.expressID]["Outputs"].push(relatingProduct.expressID);
-      }
-    }
-  }
-
-  async loadTaskNesting(modelID) {
-    let rels_nests = await this.utils.byType(modelID, "IfcRelNests");
-    for (let i = 0; i < rels_nests.length; i++) {
-      let relNests = rels_nests[i];
-      let relating_object = await this.utils.byId(modelID, relNests.RelatingObject.value);
-      if (this.utils.isA(relating_object, "IfcTask")) {
-        let relatedObjects = relNests.RelatedObjects;
-        for (var object_index = 0; object_index < relatedObjects.length; object_index++) {
-          this.tasks[relating_object.expressID]["IsNestedBy"].push(relatedObjects[object_index].value);
-          this.tasks[relatedObjects[object_index].value]["Nests"].push(relating_object.expressID);
-        }
-      }
-    }
-  }
-
-  async loadTaskOperations(modelID) {
-    let relsAssignsToProcess = await this.utils.byType(modelID, "IfcRelAssignsToProcess");
-    for (let i = 0; i < relsAssignsToProcess.length; i++) {
-      let relAssignToProcess = relsAssignsToProcess[i];
-      let relatingProcess = await this.utils.byId(modelID, relAssignToProcess.RelatingProcess.value);
-      if (this.utils.isA(relatingProcess, "IfcTask")) {
-        let relatedObjects = relAssignToProcess.RelatedObjects;
-        for (var object_index = 0; object_index < relatedObjects.length; object_index++) {
-          this.tasks[relatingProcess.expressID]["OperatesOn"].push(relatedObjects[object_index].value);
-        }
-      }
-    }
-  }
-
-  async loadAssignementsWorkCalendar(modelID) {
-    let relsAssignsToControl = await this.utils.byType(modelID, "IfcRelAssignsToControl");
-    for (let i = 0; i < relsAssignsToControl.length; i++) {
-      let relAssignsToControl = relsAssignsToControl[i];
-      let relatingControl = await this.utils.byId(modelID, relAssignsToControl.RelatingControl.value);
-      if (this.utils.isA(relatingControl, "IfcWorkCalendar")) {
-        let relatedObjects = relAssignsToControl.RelatedObjects;
-        for (var object_index = 0; object_index < relatedObjects.length; object_index++) {
-          this.tasks[relatedObjects[object_index].value]["HasAssignmentsWorkCalendars"].push(relatingControl.expressID);
-        }
-      }
-    }
-  }
-
-  async loadWorkCalendars(modelID) {
-    let workCalendars = await this.utils.byType(modelID, "IfcWorkCalendar");
-    for (let i = 0; i < workCalendars.length; i++) {
-      let workCalendar = workCalendars[i];
-      let workCalenderData = {
-        "Id": workCalendar.expressID,
-        "Name": ((workCalendar.Name) ? workCalendar.Name.value : ""),
-        "Description": ((workCalendar.Description) ? workCalendar.Description.value : ""),
-        "WorkingTimes": ((workCalendar.WorkingTimes) ? workCalendar.WorkingTimes : []),
-        "ExceptionTimes": ((workCalendar.ExceptionTimes) ? workCalendar.ExceptionTimes : []),
-      };
-      this.workCalendars[workCalendar.expressID] = workCalenderData;
-    }
-  }
-
-  async loadWorkTimes(modelID) {
-    let workTimes = await this.utils.byType(modelID, "IfcWorkTime");
-    for (let i = 0; i < workTimes.length; i++) {
-      let workTime = workTimes[i];
-      let workTimeData = {
-        "Name": ((workTime.Name) ? workTime.Name.value : ""),
-        "RecurrencePattern": ((workTime.RecurrencePattern) ? await this.utils.byId(modelID, workTime.RecurrencePattern.value) : ""),
-        "Start": ((workTime.Start) ? new Date(workTime.Start.value) : ""),
-        "Finish": ((workTime.Finish) ? new Date(workTime.Finish.value) : ""),
-      };
-      this.workTimes[workTime.expressID] = workTimeData;
-    }
-  }
-
-  async loadTimePeriods(modelID) {
-    let timePeriods = await this.utils.byType(modelID, "IfcTimePeriod");
-    for (let i = 0; i < timePeriods.length; i++) {
-      let timePeriod = timePeriods[i];
-      let workTimeData = {
-        "StartTime": ((timePeriod.StartTime) ? new Date(timePeriod.StartTime.value) : ""),
-        "EndTime": ((timePeriod.EndTime) ? new Date(timePeriod.EndTime.value) : ""),
-      };
-      this.timePeriods[timePeriod.expressID] = workTimeData;
-    }
-  }
-
-}
-
-class IFCManager {
-
-  constructor() {
-    this.state = {
-      models: [],
-      api: new IfcAPI2(),
-      useJSON: false,
-      worker: {
-        active: false,
-        path: ''
-      }
-    };
-    this.BVH = new BvhManager();
-    this.typesMap = IfcTypesMap;
-    this.parser = new IFCParser(this.state, this.BVH);
-    this.subsets = new SubsetManager(this.state, this.BVH);
-    this.utils = new IFCUtils(this.state);
-    this.sequenceData = new Data(this.state);
-    this.properties = new PropertyManager(this.state);
-    this.types = new TypeManager(this.state);
-    this.cleaner = new MemoryCleaner(this.state);
-  }
-
-  get ifcAPI() {
-    return this.state.api;
-  }
-
-  async parse(buffer) {
-    var _a;
-    const model = await this.parser.parse(buffer, (_a = this.state.coordinationMatrix) === null || _a === void 0 ? void 0 : _a.toArray());
-    model.setIFCManager(this);
-    await this.types.getAllTypes(this.worker);
-    return model;
-  }
-
-  async setWasmPath(path) {
-    this.state.api.SetWasmPath(path);
-    this.state.wasmPath = path;
-  }
-
-  setupThreeMeshBVH(computeBoundsTree, disposeBoundsTree, acceleratedRaycast) {
-    this.BVH.initializeMeshBVH(computeBoundsTree, disposeBoundsTree, acceleratedRaycast);
-  }
-
-  setOnProgress(onProgress) {
-    this.state.onProgress = onProgress;
-  }
-
-  setupCoordinationMatrix(matrix) {
-    this.state.coordinationMatrix = matrix;
-  }
-
-  clearCoordinationMatrix() {
-    delete this.state.coordinationMatrix;
-  }
-
-  async applyWebIfcConfig(settings) {
-    this.state.webIfcSettings = settings;
-    if (this.state.worker.active && this.worker) {
-      await this.worker.workerState.updateStateWebIfcSettings();
-    }
-  }
-
-  async useWebWorkers(active, path) {
-    if (this.state.worker.active === active)
-      return;
-    this.state.api = null;
-    if (active) {
-      if (!path)
-        throw new Error('You must provide a path to the web worker.');
-      this.state.worker.active = active;
-      this.state.worker.path = path;
-      await this.initializeWorkers();
-      const wasm = this.state.wasmPath;
-      if (wasm)
-        await this.setWasmPath(wasm);
-    } else {
-      this.state.api = new IfcAPI2();
-    }
-  }
-
-  async useJSONData(useJSON = true) {
-    var _a;
-    this.state.useJSON = useJSON;
-    if (useJSON) {
-      await ((_a = this.worker) === null || _a === void 0 ? void 0 : _a.workerState.updateStateUseJson());
-    }
-  }
-
-  async addModelJSONData(modelID, data) {
-    var _a;
-    const model = this.state.models[modelID];
-    if (!model)
-      throw new Error('The specified model for the JSON data does not exist');
-    if (this.state.worker.active) {
-      await ((_a = this.worker) === null || _a === void 0 ? void 0 : _a.workerState.updateModelStateJsonData(modelID, data));
-    } else {
-      model.jsonData = data;
-    }
-  }
-
-  async loadJsonDataFromWorker(modelID, path) {
-    var _a;
-    if (this.state.worker.active) {
-      await ((_a = this.worker) === null || _a === void 0 ? void 0 : _a.workerState.loadJsonDataFromWorker(modelID, path));
-    }
-  }
-
-  close(modelID, scene) {
-    this.state.api.CloseModel(modelID);
-    if (scene)
-      scene.remove(this.state.models[modelID].mesh);
-    delete this.state.models[modelID];
-  }
-
-  getExpressId(geometry, faceIndex) {
-    return this.properties.getExpressId(geometry, faceIndex);
-  }
-
-  getAllItemsOfType(modelID, type, verbose) {
-    return this.properties.getAllItemsOfType(modelID, type, verbose);
-  }
-
-  getItemProperties(modelID, id, recursive = false) {
-    return this.properties.getItemProperties(modelID, id, recursive);
-  }
-
-  getPropertySets(modelID, id, recursive = false) {
-    return this.properties.getPropertySets(modelID, id, recursive);
-  }
-
-  getTypeProperties(modelID, id, recursive = false) {
-    return this.properties.getTypeProperties(modelID, id, recursive);
-  }
-
-  getMaterialsProperties(modelID, id, recursive = false) {
-    return this.properties.getMaterialsProperties(modelID, id, recursive);
-  }
-
-  getIfcType(modelID, id) {
-    const typeID = this.state.models[modelID].types[id];
-    return IfcElements[typeID];
-  }
-
-  getSpatialStructure(modelID, includeProperties) {
-    return this.properties.getSpatialStructure(modelID, includeProperties);
-  }
-
-  getSubset(modelID, material, customId) {
-    return this.subsets.getSubset(modelID, material, customId);
-  }
-
-  removeSubset(modelID, material, customID) {
-    this.subsets.removeSubset(modelID, material, customID);
-  }
-
-  createSubset(config) {
-    return this.subsets.createSubset(config);
-  }
-
-  removeFromSubset(modelID, ids, customID, material) {
-    return this.subsets.removeFromSubset(modelID, ids, customID, material);
-  }
-
-  clearSubset(modelID, customID, material) {
-    return this.subsets.clearSubset(modelID, customID, material);
-  }
-
-  async isA(entity, entity_class) {
-    return this.utils.isA(entity, entity_class);
-  }
-
-  async getSequenceData(modelID) {
-    await this.sequenceData.load(modelID);
-    return this.sequenceData;
-  }
-
-  async byType(modelID, entityClass) {
-    return this.utils.byType(modelID, entityClass);
-  }
-
-  async byId(modelID, id) {
-    return this.utils.byId(modelID, id);
-  }
-
-  async idsByType(modelID, entityClass) {
-    return this.utils.idsByType(modelID, entityClass);
-  }
-
-  async dispose() {
-    IFCModel.dispose();
-    await this.cleaner.dispose();
-    this.subsets.dispose();
-    if (this.worker && this.state.worker.active)
-      await this.worker.terminate();
-    this.state = null;
-  }
-
-  async disposeMemory() {
-    var _a;
-    if (this.state.worker.active) {
-      await ((_a = this.worker) === null || _a === void 0 ? void 0 : _a.Close());
-    } else {
-      this.state.api.Close();
-      this.state.api = null;
-      this.state.api = new IfcAPI2();
-    }
-  }
-
-  getAndClearErrors(modelID) {
-    return this.parser.getAndClearErrors(modelID);
-  }
-
-  async initializeWorkers() {
-    this.worker = new IFCWorkerHandler(this.state, this.BVH);
-    this.state.api = this.worker.webIfc;
-    this.properties = this.worker.properties;
-    await this.worker.parser.setupOptionalCategories(this.parser.optionalCategories);
-    this.parser = this.worker.parser;
-    await this.worker.workerState.updateStateUseJson();
-    await this.worker.workerState.updateStateWebIfcSettings();
-  }
-
-}
-
-class IFCLoader extends Loader {
-
-  constructor(manager) {
-    super(manager);
-    this.ifcManager = new IFCManager();
-  }
-
-  load(url, onLoad, onProgress, onError) {
-    const scope = this;
-    const loader = new FileLoader(scope.manager);
-    this.onProgress = onProgress;
-    loader.setPath(scope.path);
-    loader.setResponseType('arraybuffer');
-    loader.setRequestHeader(scope.requestHeader);
-    loader.setWithCredentials(scope.withCredentials);
-    loader.load(url, async function (buffer) {
-      try {
-        if (typeof buffer == 'string') {
-          throw new Error('IFC files must be given as a buffer!');
-        }
-        onLoad(await scope.parse(buffer));
-      } catch (e) {
-        if (onError) {
-          onError(e);
-        } else {
-          console.error(e);
-        }
-        scope.manager.itemError(url);
-      }
-    }, onProgress, onError);
-  }
-
-  parse(buffer) {
-    return this.ifcManager.parse(buffer);
-  }
-
-}
-
-var NavigationModes;
-(function (NavigationModes) {
-    NavigationModes[NavigationModes["Orbit"] = 0] = "Orbit";
-    NavigationModes[NavigationModes["FirstPerson"] = 1] = "FirstPerson";
-    NavigationModes[NavigationModes["Plan"] = 2] = "Plan";
-})(NavigationModes || (NavigationModes = {}));
-var CameraProjections;
-(function (CameraProjections) {
-    CameraProjections[CameraProjections["Perspective"] = 0] = "Perspective";
-    CameraProjections[CameraProjections["Orthographic"] = 1] = "Orthographic";
-})(CameraProjections || (CameraProjections = {}));
-class IfcComponent {
-    constructor(context) {
-        context.addComponent(this);
-    }
-    update(_delta) { }
-}
-var dimension;
-(function (dimension) {
-    dimension["x"] = "x";
-    dimension["y"] = "y";
-    dimension["z"] = "z";
-})(dimension || (dimension = {}));
-
-const _raycaster$1 = new Raycaster();
-
-const _tempVector = new Vector3();
-const _tempVector2 = new Vector3();
-const _tempQuaternion = new Quaternion();
-const _unit = {
-	X: new Vector3( 1, 0, 0 ),
-	Y: new Vector3( 0, 1, 0 ),
-	Z: new Vector3( 0, 0, 1 )
-};
-
-const _changeEvent = { type: 'change' };
-const _mouseDownEvent = { type: 'mouseDown' };
-const _mouseUpEvent = { type: 'mouseUp', mode: null };
-const _objectChangeEvent = { type: 'objectChange' };
-
-class TransformControls extends Object3D {
-
-	constructor( camera, domElement ) {
-
-		super();
-
-		if ( domElement === undefined ) {
-
-			console.warn( 'THREE.TransformControls: The second parameter "domElement" is now mandatory.' );
-			domElement = document;
-
-		}
-
-		this.visible = false;
-		this.domElement = domElement;
-		this.domElement.style.touchAction = 'none'; // disable touch scroll
-
-		const _gizmo = new TransformControlsGizmo();
-		this._gizmo = _gizmo;
-		this.add( _gizmo );
-
-		const _plane = new TransformControlsPlane();
-		this._plane = _plane;
-		this.add( _plane );
-
-		const scope = this;
-
-		// Defined getter, setter and store for a property
-		function defineProperty( propName, defaultValue ) {
-
-			let propValue = defaultValue;
-
-			Object.defineProperty( scope, propName, {
-
-				get: function () {
-
-					return propValue !== undefined ? propValue : defaultValue;
-
-				},
-
-				set: function ( value ) {
-
-					if ( propValue !== value ) {
-
-						propValue = value;
-						_plane[ propName ] = value;
-						_gizmo[ propName ] = value;
-
-						scope.dispatchEvent( { type: propName + '-changed', value: value } );
-						scope.dispatchEvent( _changeEvent );
-
-					}
-
-				}
-
-			} );
-
-			scope[ propName ] = defaultValue;
-			_plane[ propName ] = defaultValue;
-			_gizmo[ propName ] = defaultValue;
-
-		}
-
-		// Define properties with getters/setter
-		// Setting the defined property will automatically trigger change event
-		// Defined properties are passed down to gizmo and plane
-
-		defineProperty( 'camera', camera );
-		defineProperty( 'object', undefined );
-		defineProperty( 'enabled', true );
-		defineProperty( 'axis', null );
-		defineProperty( 'mode', 'translate' );
-		defineProperty( 'translationSnap', null );
-		defineProperty( 'rotationSnap', null );
-		defineProperty( 'scaleSnap', null );
-		defineProperty( 'space', 'world' );
-		defineProperty( 'size', 1 );
-		defineProperty( 'dragging', false );
-		defineProperty( 'showX', true );
-		defineProperty( 'showY', true );
-		defineProperty( 'showZ', true );
-
-		// Reusable utility variables
-
-		const worldPosition = new Vector3();
-		const worldPositionStart = new Vector3();
-		const worldQuaternion = new Quaternion();
-		const worldQuaternionStart = new Quaternion();
-		const cameraPosition = new Vector3();
-		const cameraQuaternion = new Quaternion();
-		const pointStart = new Vector3();
-		const pointEnd = new Vector3();
-		const rotationAxis = new Vector3();
-		const rotationAngle = 0;
-		const eye = new Vector3();
-
-		// TODO: remove properties unused in plane and gizmo
-
-		defineProperty( 'worldPosition', worldPosition );
-		defineProperty( 'worldPositionStart', worldPositionStart );
-		defineProperty( 'worldQuaternion', worldQuaternion );
-		defineProperty( 'worldQuaternionStart', worldQuaternionStart );
-		defineProperty( 'cameraPosition', cameraPosition );
-		defineProperty( 'cameraQuaternion', cameraQuaternion );
-		defineProperty( 'pointStart', pointStart );
-		defineProperty( 'pointEnd', pointEnd );
-		defineProperty( 'rotationAxis', rotationAxis );
-		defineProperty( 'rotationAngle', rotationAngle );
-		defineProperty( 'eye', eye );
-
-		this._offset = new Vector3();
-		this._startNorm = new Vector3();
-		this._endNorm = new Vector3();
-		this._cameraScale = new Vector3();
-
-		this._parentPosition = new Vector3();
-		this._parentQuaternion = new Quaternion();
-		this._parentQuaternionInv = new Quaternion();
-		this._parentScale = new Vector3();
-
-		this._worldScaleStart = new Vector3();
-		this._worldQuaternionInv = new Quaternion();
-		this._worldScale = new Vector3();
-
-		this._positionStart = new Vector3();
-		this._quaternionStart = new Quaternion();
-		this._scaleStart = new Vector3();
-
-		this._getPointer = getPointer.bind( this );
-		this._onPointerDown = onPointerDown.bind( this );
-		this._onPointerHover = onPointerHover.bind( this );
-		this._onPointerMove = onPointerMove.bind( this );
-		this._onPointerUp = onPointerUp.bind( this );
-
-		this.domElement.addEventListener( 'pointerdown', this._onPointerDown );
-		this.domElement.addEventListener( 'pointermove', this._onPointerHover );
-		this.domElement.addEventListener( 'pointerup', this._onPointerUp );
-
-	}
-
-	// updateMatrixWorld  updates key transformation variables
-	updateMatrixWorld() {
-
-		if ( this.object !== undefined ) {
-
-			this.object.updateMatrixWorld();
-
-			if ( this.object.parent === null ) {
-
-				console.error( 'TransformControls: The attached 3D object must be a part of the scene graph.' );
-
-			} else {
-
-				this.object.parent.matrixWorld.decompose( this._parentPosition, this._parentQuaternion, this._parentScale );
-
-			}
-
-			this.object.matrixWorld.decompose( this.worldPosition, this.worldQuaternion, this._worldScale );
-
-			this._parentQuaternionInv.copy( this._parentQuaternion ).invert();
-			this._worldQuaternionInv.copy( this.worldQuaternion ).invert();
-
-		}
-
-		this.camera.updateMatrixWorld();
-		this.camera.matrixWorld.decompose( this.cameraPosition, this.cameraQuaternion, this._cameraScale );
-
-		this.eye.copy( this.cameraPosition ).sub( this.worldPosition ).normalize();
-
-		super.updateMatrixWorld( this );
-
-	}
-
-	pointerHover( pointer ) {
-
-		if ( this.object === undefined || this.dragging === true ) return;
-
-		_raycaster$1.setFromCamera( pointer, this.camera );
-
-		const intersect = intersectObjectWithRay( this._gizmo.picker[ this.mode ], _raycaster$1 );
-
-		if ( intersect ) {
-
-			this.axis = intersect.object.name;
-
-		} else {
-
-			this.axis = null;
-
-		}
-
-	}
-
-	pointerDown( pointer ) {
-
-		if ( this.object === undefined || this.dragging === true || pointer.button !== 0 ) return;
-
-		if ( this.axis !== null ) {
-
-			_raycaster$1.setFromCamera( pointer, this.camera );
-
-			const planeIntersect = intersectObjectWithRay( this._plane, _raycaster$1, true );
-
-			if ( planeIntersect ) {
-
-				this.object.updateMatrixWorld();
-				this.object.parent.updateMatrixWorld();
-
-				this._positionStart.copy( this.object.position );
-				this._quaternionStart.copy( this.object.quaternion );
-				this._scaleStart.copy( this.object.scale );
-
-				this.object.matrixWorld.decompose( this.worldPositionStart, this.worldQuaternionStart, this._worldScaleStart );
-
-				this.pointStart.copy( planeIntersect.point ).sub( this.worldPositionStart );
-
-			}
-
-			this.dragging = true;
-			_mouseDownEvent.mode = this.mode;
-			this.dispatchEvent( _mouseDownEvent );
-
-		}
-
-	}
-
-	pointerMove( pointer ) {
-
-		const axis = this.axis;
-		const mode = this.mode;
-		const object = this.object;
-		let space = this.space;
-
-		if ( mode === 'scale' ) {
-
-			space = 'local';
-
-		} else if ( axis === 'E' || axis === 'XYZE' || axis === 'XYZ' ) {
-
-			space = 'world';
-
-		}
-
-		if ( object === undefined || axis === null || this.dragging === false || pointer.button !== - 1 ) return;
-
-		_raycaster$1.setFromCamera( pointer, this.camera );
-
-		const planeIntersect = intersectObjectWithRay( this._plane, _raycaster$1, true );
-
-		if ( ! planeIntersect ) return;
-
-		this.pointEnd.copy( planeIntersect.point ).sub( this.worldPositionStart );
-
-		if ( mode === 'translate' ) {
-
-			// Apply translate
-
-			this._offset.copy( this.pointEnd ).sub( this.pointStart );
-
-			if ( space === 'local' && axis !== 'XYZ' ) {
-
-				this._offset.applyQuaternion( this._worldQuaternionInv );
-
-			}
-
-			if ( axis.indexOf( 'X' ) === - 1 ) this._offset.x = 0;
-			if ( axis.indexOf( 'Y' ) === - 1 ) this._offset.y = 0;
-			if ( axis.indexOf( 'Z' ) === - 1 ) this._offset.z = 0;
-
-			if ( space === 'local' && axis !== 'XYZ' ) {
-
-				this._offset.applyQuaternion( this._quaternionStart ).divide( this._parentScale );
-
-			} else {
-
-				this._offset.applyQuaternion( this._parentQuaternionInv ).divide( this._parentScale );
-
-			}
-
-			object.position.copy( this._offset ).add( this._positionStart );
-
-			// Apply translation snap
-
-			if ( this.translationSnap ) {
-
-				if ( space === 'local' ) {
-
-					object.position.applyQuaternion( _tempQuaternion.copy( this._quaternionStart ).invert() );
-
-					if ( axis.search( 'X' ) !== - 1 ) {
-
-						object.position.x = Math.round( object.position.x / this.translationSnap ) * this.translationSnap;
-
-					}
-
-					if ( axis.search( 'Y' ) !== - 1 ) {
-
-						object.position.y = Math.round( object.position.y / this.translationSnap ) * this.translationSnap;
-
-					}
-
-					if ( axis.search( 'Z' ) !== - 1 ) {
-
-						object.position.z = Math.round( object.position.z / this.translationSnap ) * this.translationSnap;
-
-					}
-
-					object.position.applyQuaternion( this._quaternionStart );
-
-				}
-
-				if ( space === 'world' ) {
-
-					if ( object.parent ) {
-
-						object.position.add( _tempVector.setFromMatrixPosition( object.parent.matrixWorld ) );
-
-					}
-
-					if ( axis.search( 'X' ) !== - 1 ) {
-
-						object.position.x = Math.round( object.position.x / this.translationSnap ) * this.translationSnap;
-
-					}
-
-					if ( axis.search( 'Y' ) !== - 1 ) {
-
-						object.position.y = Math.round( object.position.y / this.translationSnap ) * this.translationSnap;
-
-					}
-
-					if ( axis.search( 'Z' ) !== - 1 ) {
-
-						object.position.z = Math.round( object.position.z / this.translationSnap ) * this.translationSnap;
-
-					}
-
-					if ( object.parent ) {
-
-						object.position.sub( _tempVector.setFromMatrixPosition( object.parent.matrixWorld ) );
-
-					}
-
-				}
-
-			}
-
-		} else if ( mode === 'scale' ) {
-
-			if ( axis.search( 'XYZ' ) !== - 1 ) {
-
-				let d = this.pointEnd.length() / this.pointStart.length();
-
-				if ( this.pointEnd.dot( this.pointStart ) < 0 ) d *= - 1;
-
-				_tempVector2.set( d, d, d );
-
-			} else {
-
-				_tempVector.copy( this.pointStart );
-				_tempVector2.copy( this.pointEnd );
-
-				_tempVector.applyQuaternion( this._worldQuaternionInv );
-				_tempVector2.applyQuaternion( this._worldQuaternionInv );
-
-				_tempVector2.divide( _tempVector );
-
-				if ( axis.search( 'X' ) === - 1 ) {
-
-					_tempVector2.x = 1;
-
-				}
-
-				if ( axis.search( 'Y' ) === - 1 ) {
-
-					_tempVector2.y = 1;
-
-				}
-
-				if ( axis.search( 'Z' ) === - 1 ) {
-
-					_tempVector2.z = 1;
-
-				}
-
-			}
-
-			// Apply scale
-
-			object.scale.copy( this._scaleStart ).multiply( _tempVector2 );
-
-			if ( this.scaleSnap ) {
-
-				if ( axis.search( 'X' ) !== - 1 ) {
-
-					object.scale.x = Math.round( object.scale.x / this.scaleSnap ) * this.scaleSnap || this.scaleSnap;
-
-				}
-
-				if ( axis.search( 'Y' ) !== - 1 ) {
-
-					object.scale.y = Math.round( object.scale.y / this.scaleSnap ) * this.scaleSnap || this.scaleSnap;
-
-				}
-
-				if ( axis.search( 'Z' ) !== - 1 ) {
-
-					object.scale.z = Math.round( object.scale.z / this.scaleSnap ) * this.scaleSnap || this.scaleSnap;
-
-				}
-
-			}
-
-		} else if ( mode === 'rotate' ) {
-
-			this._offset.copy( this.pointEnd ).sub( this.pointStart );
-
-			const ROTATION_SPEED = 20 / this.worldPosition.distanceTo( _tempVector.setFromMatrixPosition( this.camera.matrixWorld ) );
-
-			if ( axis === 'E' ) {
-
-				this.rotationAxis.copy( this.eye );
-				this.rotationAngle = this.pointEnd.angleTo( this.pointStart );
-
-				this._startNorm.copy( this.pointStart ).normalize();
-				this._endNorm.copy( this.pointEnd ).normalize();
-
-				this.rotationAngle *= ( this._endNorm.cross( this._startNorm ).dot( this.eye ) < 0 ? 1 : - 1 );
-
-			} else if ( axis === 'XYZE' ) {
-
-				this.rotationAxis.copy( this._offset ).cross( this.eye ).normalize();
-				this.rotationAngle = this._offset.dot( _tempVector.copy( this.rotationAxis ).cross( this.eye ) ) * ROTATION_SPEED;
-
-			} else if ( axis === 'X' || axis === 'Y' || axis === 'Z' ) {
-
-				this.rotationAxis.copy( _unit[ axis ] );
-
-				_tempVector.copy( _unit[ axis ] );
-
-				if ( space === 'local' ) {
-
-					_tempVector.applyQuaternion( this.worldQuaternion );
-
-				}
-
-				this.rotationAngle = this._offset.dot( _tempVector.cross( this.eye ).normalize() ) * ROTATION_SPEED;
-
-			}
-
-			// Apply rotation snap
-
-			if ( this.rotationSnap ) this.rotationAngle = Math.round( this.rotationAngle / this.rotationSnap ) * this.rotationSnap;
-
-			// Apply rotate
-			if ( space === 'local' && axis !== 'E' && axis !== 'XYZE' ) {
-
-				object.quaternion.copy( this._quaternionStart );
-				object.quaternion.multiply( _tempQuaternion.setFromAxisAngle( this.rotationAxis, this.rotationAngle ) ).normalize();
-
-			} else {
-
-				this.rotationAxis.applyQuaternion( this._parentQuaternionInv );
-				object.quaternion.copy( _tempQuaternion.setFromAxisAngle( this.rotationAxis, this.rotationAngle ) );
-				object.quaternion.multiply( this._quaternionStart ).normalize();
-
-			}
-
-		}
-
-		this.dispatchEvent( _changeEvent );
-		this.dispatchEvent( _objectChangeEvent );
-
-	}
-
-	pointerUp( pointer ) {
-
-		if ( pointer.button !== 0 ) return;
-
-		if ( this.dragging && ( this.axis !== null ) ) {
-
-			_mouseUpEvent.mode = this.mode;
-			this.dispatchEvent( _mouseUpEvent );
-
-		}
-
-		this.dragging = false;
-		this.axis = null;
-
-	}
-
-	dispose() {
-
-		this.domElement.removeEventListener( 'pointerdown', this._onPointerDown );
-		this.domElement.removeEventListener( 'pointermove', this._onPointerHover );
-		this.domElement.removeEventListener( 'pointermove', this._onPointerMove );
-		this.domElement.removeEventListener( 'pointerup', this._onPointerUp );
-
-		this.traverse( function ( child ) {
-
-			if ( child.geometry ) child.geometry.dispose();
-			if ( child.material ) child.material.dispose();
-
-		} );
-
-	}
-
-	// Set current object
-	attach( object ) {
-
-		this.object = object;
-		this.visible = true;
-
-		return this;
-
-	}
-
-	// Detatch from object
-	detach() {
-
-		this.object = undefined;
-		this.visible = false;
-		this.axis = null;
-
-		return this;
-
-	}
-
-	getRaycaster() {
-
-		return _raycaster$1;
-
-	}
-
-	// TODO: deprecate
-
-	getMode() {
-
-		return this.mode;
-
-	}
-
-	setMode( mode ) {
-
-		this.mode = mode;
-
-	}
-
-	setTranslationSnap( translationSnap ) {
-
-		this.translationSnap = translationSnap;
-
-	}
-
-	setRotationSnap( rotationSnap ) {
-
-		this.rotationSnap = rotationSnap;
-
-	}
-
-	setScaleSnap( scaleSnap ) {
-
-		this.scaleSnap = scaleSnap;
-
-	}
-
-	setSize( size ) {
-
-		this.size = size;
-
-	}
-
-	setSpace( space ) {
-
-		this.space = space;
-
-	}
-
-	update() {
-
-		console.warn( 'THREE.TransformControls: update function has no more functionality and therefore has been deprecated.' );
-
-	}
-
-}
-
-TransformControls.prototype.isTransformControls = true;
-
-// mouse / touch event handlers
-
-function getPointer( event ) {
-
-	if ( this.domElement.ownerDocument.pointerLockElement ) {
-
-		return {
-			x: 0,
-			y: 0,
-			button: event.button
-		};
-
-	} else {
-
-		const rect = this.domElement.getBoundingClientRect();
-
-		return {
-			x: ( event.clientX - rect.left ) / rect.width * 2 - 1,
-			y: - ( event.clientY - rect.top ) / rect.height * 2 + 1,
-			button: event.button
-		};
-
-	}
-
-}
-
-function onPointerHover( event ) {
-
-	if ( ! this.enabled ) return;
-
-	switch ( event.pointerType ) {
-
-		case 'mouse':
-		case 'pen':
-			this.pointerHover( this._getPointer( event ) );
-			break;
-
-	}
-
-}
-
-function onPointerDown( event ) {
-
-	if ( ! this.enabled ) return;
-
-	this.domElement.setPointerCapture( event.pointerId );
-
-	this.domElement.addEventListener( 'pointermove', this._onPointerMove );
-
-	this.pointerHover( this._getPointer( event ) );
-	this.pointerDown( this._getPointer( event ) );
-
-}
-
-function onPointerMove( event ) {
-
-	if ( ! this.enabled ) return;
-
-	this.pointerMove( this._getPointer( event ) );
-
-}
-
-function onPointerUp( event ) {
-
-	if ( ! this.enabled ) return;
-
-	this.domElement.releasePointerCapture( event.pointerId );
-
-	this.domElement.removeEventListener( 'pointermove', this._onPointerMove );
-
-	this.pointerUp( this._getPointer( event ) );
-
-}
-
-function intersectObjectWithRay( object, raycaster, includeInvisible ) {
-
-	const allIntersections = raycaster.intersectObject( object, true );
-
-	for ( let i = 0; i < allIntersections.length; i ++ ) {
-
-		if ( allIntersections[ i ].object.visible || includeInvisible ) {
-
-			return allIntersections[ i ];
-
-		}
-
-	}
-
-	return false;
-
-}
-
-//
-
-// Reusable utility variables
-
-const _tempEuler = new Euler();
-const _alignVector = new Vector3( 0, 1, 0 );
-const _zeroVector = new Vector3( 0, 0, 0 );
-const _lookAtMatrix = new Matrix4();
-const _tempQuaternion2 = new Quaternion();
-const _identityQuaternion = new Quaternion();
-const _dirVector = new Vector3();
-const _tempMatrix = new Matrix4();
-
-const _unitX = new Vector3( 1, 0, 0 );
-const _unitY = new Vector3( 0, 1, 0 );
-const _unitZ = new Vector3( 0, 0, 1 );
-
-const _v1 = new Vector3();
-const _v2$1 = new Vector3();
-const _v3 = new Vector3();
-
-class TransformControlsGizmo extends Object3D {
-
-	constructor() {
-
-		super();
-
-		this.type = 'TransformControlsGizmo';
-
-		// shared materials
-
-		const gizmoMaterial = new MeshBasicMaterial( {
-			depthTest: false,
-			depthWrite: false,
-			fog: false,
-			toneMapped: false,
-			transparent: true
-		} );
-
-		const gizmoLineMaterial = new LineBasicMaterial( {
-			depthTest: false,
-			depthWrite: false,
-			fog: false,
-			toneMapped: false,
-			transparent: true
-		} );
-
-		// Make unique material for each axis/color
-
-		const matInvisible = gizmoMaterial.clone();
-		matInvisible.opacity = 0.15;
-
-		const matHelper = gizmoLineMaterial.clone();
-		matHelper.opacity = 0.5;
-
-		const matRed = gizmoMaterial.clone();
-		matRed.color.setHex( 0xff0000 );
-
-		const matGreen = gizmoMaterial.clone();
-		matGreen.color.setHex( 0x00ff00 );
-
-		const matBlue = gizmoMaterial.clone();
-		matBlue.color.setHex( 0x0000ff );
-
-		const matRedTransparent = gizmoMaterial.clone();
-		matRedTransparent.color.setHex( 0xff0000 );
-		matRedTransparent.opacity = 0.5;
-
-		const matGreenTransparent = gizmoMaterial.clone();
-		matGreenTransparent.color.setHex( 0x00ff00 );
-		matGreenTransparent.opacity = 0.5;
-
-		const matBlueTransparent = gizmoMaterial.clone();
-		matBlueTransparent.color.setHex( 0x0000ff );
-		matBlueTransparent.opacity = 0.5;
-
-		const matWhiteTransparent = gizmoMaterial.clone();
-		matWhiteTransparent.opacity = 0.25;
-
-		const matYellowTransparent = gizmoMaterial.clone();
-		matYellowTransparent.color.setHex( 0xffff00 );
-		matYellowTransparent.opacity = 0.25;
-
-		const matYellow = gizmoMaterial.clone();
-		matYellow.color.setHex( 0xffff00 );
-
-		const matGray = gizmoMaterial.clone();
-		matGray.color.setHex( 0x787878 );
-
-		// reusable geometry
-
-		const arrowGeometry = new CylinderGeometry( 0, 0.04, 0.1, 12 );
-		arrowGeometry.translate( 0, 0.05, 0 );
-
-		const scaleHandleGeometry = new BoxGeometry( 0.08, 0.08, 0.08 );
-		scaleHandleGeometry.translate( 0, 0.04, 0 );
-
-		const lineGeometry = new BufferGeometry();
-		lineGeometry.setAttribute( 'position', new Float32BufferAttribute( [ 0, 0, 0,	1, 0, 0 ], 3 ) );
-
-		const lineGeometry2 = new CylinderGeometry( 0.0075, 0.0075, 0.5, 3 );
-		lineGeometry2.translate( 0, 0.25, 0 );
-
-		function CircleGeometry( radius, arc ) {
-
-			const geometry = new TorusGeometry( radius, 0.0075, 3, 64, arc * Math.PI * 2 );
-			geometry.rotateY( Math.PI / 2 );
-			geometry.rotateX( Math.PI / 2 );
-			return geometry;
-
-		}
-
-		// Special geometry for transform helper. If scaled with position vector it spans from [0,0,0] to position
-
-		function TranslateHelperGeometry() {
-
-			const geometry = new BufferGeometry();
-
-			geometry.setAttribute( 'position', new Float32BufferAttribute( [ 0, 0, 0, 1, 1, 1 ], 3 ) );
-
-			return geometry;
-
-		}
-
-		// Gizmo definitions - custom hierarchy definitions for setupGizmo() function
-
-		const gizmoTranslate = {
-			X: [
-				[ new Mesh( arrowGeometry, matRed ), [ 0.5, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
-				[ new Mesh( arrowGeometry, matRed ), [ - 0.5, 0, 0 ], [ 0, 0, Math.PI / 2 ]],
-				[ new Mesh( lineGeometry2, matRed ), [ 0, 0, 0 ], [ 0, 0, - Math.PI / 2 ]]
-			],
-			Y: [
-				[ new Mesh( arrowGeometry, matGreen ), [ 0, 0.5, 0 ]],
-				[ new Mesh( arrowGeometry, matGreen ), [ 0, - 0.5, 0 ], [ Math.PI, 0, 0 ]],
-				[ new Mesh( lineGeometry2, matGreen ) ]
-			],
-			Z: [
-				[ new Mesh( arrowGeometry, matBlue ), [ 0, 0, 0.5 ], [ Math.PI / 2, 0, 0 ]],
-				[ new Mesh( arrowGeometry, matBlue ), [ 0, 0, - 0.5 ], [ - Math.PI / 2, 0, 0 ]],
-				[ new Mesh( lineGeometry2, matBlue ), null, [ Math.PI / 2, 0, 0 ]]
-			],
-			XYZ: [
-				[ new Mesh( new OctahedronGeometry( 0.1, 0 ), matWhiteTransparent.clone() ), [ 0, 0, 0 ]]
-			],
-			XY: [
-				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matBlueTransparent.clone() ), [ 0.15, 0.15, 0 ]]
-			],
-			YZ: [
-				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matRedTransparent.clone() ), [ 0, 0.15, 0.15 ], [ 0, Math.PI / 2, 0 ]]
-			],
-			XZ: [
-				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matGreenTransparent.clone() ), [ 0.15, 0, 0.15 ], [ - Math.PI / 2, 0, 0 ]]
-			]
-		};
-
-		const pickerTranslate = {
-			X: [
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0.3, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ - 0.3, 0, 0 ], [ 0, 0, Math.PI / 2 ]]
-			],
-			Y: [
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0.3, 0 ]],
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, - 0.3, 0 ], [ 0, 0, Math.PI ]]
-			],
-			Z: [
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0, 0.3 ], [ Math.PI / 2, 0, 0 ]],
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0, - 0.3 ], [ - Math.PI / 2, 0, 0 ]]
-			],
-			XYZ: [
-				[ new Mesh( new OctahedronGeometry( 0.2, 0 ), matInvisible ) ]
-			],
-			XY: [
-				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0.15, 0.15, 0 ]]
-			],
-			YZ: [
-				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0, 0.15, 0.15 ], [ 0, Math.PI / 2, 0 ]]
-			],
-			XZ: [
-				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0.15, 0, 0.15 ], [ - Math.PI / 2, 0, 0 ]]
-			]
-		};
-
-		const helperTranslate = {
-			START: [
-				[ new Mesh( new OctahedronGeometry( 0.01, 2 ), matHelper ), null, null, null, 'helper' ]
-			],
-			END: [
-				[ new Mesh( new OctahedronGeometry( 0.01, 2 ), matHelper ), null, null, null, 'helper' ]
-			],
-			DELTA: [
-				[ new Line( TranslateHelperGeometry(), matHelper ), null, null, null, 'helper' ]
-			],
-			X: [
-				[ new Line( lineGeometry, matHelper.clone() ), [ - 1e3, 0, 0 ], null, [ 1e6, 1, 1 ], 'helper' ]
-			],
-			Y: [
-				[ new Line( lineGeometry, matHelper.clone() ), [ 0, - 1e3, 0 ], [ 0, 0, Math.PI / 2 ], [ 1e6, 1, 1 ], 'helper' ]
-			],
-			Z: [
-				[ new Line( lineGeometry, matHelper.clone() ), [ 0, 0, - 1e3 ], [ 0, - Math.PI / 2, 0 ], [ 1e6, 1, 1 ], 'helper' ]
-			]
-		};
-
-		const gizmoRotate = {
-			XYZE: [
-				[ new Mesh( CircleGeometry( 0.5, 1 ), matGray ), null, [ 0, Math.PI / 2, 0 ]]
-			],
-			X: [
-				[ new Mesh( CircleGeometry( 0.5, 0.5 ), matRed ) ]
-			],
-			Y: [
-				[ new Mesh( CircleGeometry( 0.5, 0.5 ), matGreen ), null, [ 0, 0, - Math.PI / 2 ]]
-			],
-			Z: [
-				[ new Mesh( CircleGeometry( 0.5, 0.5 ), matBlue ), null, [ 0, Math.PI / 2, 0 ]]
-			],
-			E: [
-				[ new Mesh( CircleGeometry( 0.75, 1 ), matYellowTransparent ), null, [ 0, Math.PI / 2, 0 ]]
-			]
-		};
-
-		const helperRotate = {
-			AXIS: [
-				[ new Line( lineGeometry, matHelper.clone() ), [ - 1e3, 0, 0 ], null, [ 1e6, 1, 1 ], 'helper' ]
-			]
-		};
-
-		const pickerRotate = {
-			XYZE: [
-				[ new Mesh( new SphereGeometry( 0.25, 10, 8 ), matInvisible ) ]
-			],
-			X: [
-				[ new Mesh( new TorusGeometry( 0.5, 0.1, 4, 24 ), matInvisible ), [ 0, 0, 0 ], [ 0, - Math.PI / 2, - Math.PI / 2 ]],
-			],
-			Y: [
-				[ new Mesh( new TorusGeometry( 0.5, 0.1, 4, 24 ), matInvisible ), [ 0, 0, 0 ], [ Math.PI / 2, 0, 0 ]],
-			],
-			Z: [
-				[ new Mesh( new TorusGeometry( 0.5, 0.1, 4, 24 ), matInvisible ), [ 0, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
-			],
-			E: [
-				[ new Mesh( new TorusGeometry( 0.75, 0.1, 2, 24 ), matInvisible ) ]
-			]
-		};
-
-		const gizmoScale = {
-			X: [
-				[ new Mesh( scaleHandleGeometry, matRed ), [ 0.5, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
-				[ new Mesh( lineGeometry2, matRed ), [ 0, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
-				[ new Mesh( scaleHandleGeometry, matRed ), [ - 0.5, 0, 0 ], [ 0, 0, Math.PI / 2 ]],
-			],
-			Y: [
-				[ new Mesh( scaleHandleGeometry, matGreen ), [ 0, 0.5, 0 ]],
-				[ new Mesh( lineGeometry2, matGreen ) ],
-				[ new Mesh( scaleHandleGeometry, matGreen ), [ 0, - 0.5, 0 ], [ 0, 0, Math.PI ]],
-			],
-			Z: [
-				[ new Mesh( scaleHandleGeometry, matBlue ), [ 0, 0, 0.5 ], [ Math.PI / 2, 0, 0 ]],
-				[ new Mesh( lineGeometry2, matBlue ), [ 0, 0, 0 ], [ Math.PI / 2, 0, 0 ]],
-				[ new Mesh( scaleHandleGeometry, matBlue ), [ 0, 0, - 0.5 ], [ - Math.PI / 2, 0, 0 ]]
-			],
-			XY: [
-				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matBlueTransparent ), [ 0.15, 0.15, 0 ]]
-			],
-			YZ: [
-				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matRedTransparent ), [ 0, 0.15, 0.15 ], [ 0, Math.PI / 2, 0 ]]
-			],
-			XZ: [
-				[ new Mesh( new BoxGeometry( 0.15, 0.15, 0.01 ), matGreenTransparent ), [ 0.15, 0, 0.15 ], [ - Math.PI / 2, 0, 0 ]]
-			],
-			XYZ: [
-				[ new Mesh( new BoxGeometry( 0.1, 0.1, 0.1 ), matWhiteTransparent.clone() ) ],
-			]
-		};
-
-		const pickerScale = {
-			X: [
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0.3, 0, 0 ], [ 0, 0, - Math.PI / 2 ]],
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ - 0.3, 0, 0 ], [ 0, 0, Math.PI / 2 ]]
-			],
-			Y: [
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0.3, 0 ]],
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, - 0.3, 0 ], [ 0, 0, Math.PI ]]
-			],
-			Z: [
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0, 0.3 ], [ Math.PI / 2, 0, 0 ]],
-				[ new Mesh( new CylinderGeometry( 0.2, 0, 0.6, 4 ), matInvisible ), [ 0, 0, - 0.3 ], [ - Math.PI / 2, 0, 0 ]]
-			],
-			XY: [
-				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0.15, 0.15, 0 ]],
-			],
-			YZ: [
-				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0, 0.15, 0.15 ], [ 0, Math.PI / 2, 0 ]],
-			],
-			XZ: [
-				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.01 ), matInvisible ), [ 0.15, 0, 0.15 ], [ - Math.PI / 2, 0, 0 ]],
-			],
-			XYZ: [
-				[ new Mesh( new BoxGeometry( 0.2, 0.2, 0.2 ), matInvisible ), [ 0, 0, 0 ]],
-			]
-		};
-
-		const helperScale = {
-			X: [
-				[ new Line( lineGeometry, matHelper.clone() ), [ - 1e3, 0, 0 ], null, [ 1e6, 1, 1 ], 'helper' ]
-			],
-			Y: [
-				[ new Line( lineGeometry, matHelper.clone() ), [ 0, - 1e3, 0 ], [ 0, 0, Math.PI / 2 ], [ 1e6, 1, 1 ], 'helper' ]
-			],
-			Z: [
-				[ new Line( lineGeometry, matHelper.clone() ), [ 0, 0, - 1e3 ], [ 0, - Math.PI / 2, 0 ], [ 1e6, 1, 1 ], 'helper' ]
-			]
-		};
-
-		// Creates an Object3D with gizmos described in custom hierarchy definition.
-
-		function setupGizmo( gizmoMap ) {
-
-			const gizmo = new Object3D();
-
-			for ( const name in gizmoMap ) {
-
-				for ( let i = gizmoMap[ name ].length; i --; ) {
-
-					const object = gizmoMap[ name ][ i ][ 0 ].clone();
-					const position = gizmoMap[ name ][ i ][ 1 ];
-					const rotation = gizmoMap[ name ][ i ][ 2 ];
-					const scale = gizmoMap[ name ][ i ][ 3 ];
-					const tag = gizmoMap[ name ][ i ][ 4 ];
-
-					// name and tag properties are essential for picking and updating logic.
-					object.name = name;
-					object.tag = tag;
-
-					if ( position ) {
-
-						object.position.set( position[ 0 ], position[ 1 ], position[ 2 ] );
-
-					}
-
-					if ( rotation ) {
-
-						object.rotation.set( rotation[ 0 ], rotation[ 1 ], rotation[ 2 ] );
-
-					}
-
-					if ( scale ) {
-
-						object.scale.set( scale[ 0 ], scale[ 1 ], scale[ 2 ] );
-
-					}
-
-					object.updateMatrix();
-
-					const tempGeometry = object.geometry.clone();
-					tempGeometry.applyMatrix4( object.matrix );
-					object.geometry = tempGeometry;
-					object.renderOrder = Infinity;
-
-					object.position.set( 0, 0, 0 );
-					object.rotation.set( 0, 0, 0 );
-					object.scale.set( 1, 1, 1 );
-
-					gizmo.add( object );
-
-				}
-
-			}
-
-			return gizmo;
-
-		}
-
-		// Gizmo creation
-
-		this.gizmo = {};
-		this.picker = {};
-		this.helper = {};
-
-		this.add( this.gizmo[ 'translate' ] = setupGizmo( gizmoTranslate ) );
-		this.add( this.gizmo[ 'rotate' ] = setupGizmo( gizmoRotate ) );
-		this.add( this.gizmo[ 'scale' ] = setupGizmo( gizmoScale ) );
-		this.add( this.picker[ 'translate' ] = setupGizmo( pickerTranslate ) );
-		this.add( this.picker[ 'rotate' ] = setupGizmo( pickerRotate ) );
-		this.add( this.picker[ 'scale' ] = setupGizmo( pickerScale ) );
-		this.add( this.helper[ 'translate' ] = setupGizmo( helperTranslate ) );
-		this.add( this.helper[ 'rotate' ] = setupGizmo( helperRotate ) );
-		this.add( this.helper[ 'scale' ] = setupGizmo( helperScale ) );
-
-		// Pickers should be hidden always
-
-		this.picker[ 'translate' ].visible = false;
-		this.picker[ 'rotate' ].visible = false;
-		this.picker[ 'scale' ].visible = false;
-
-	}
-
-	// updateMatrixWorld will update transformations and appearance of individual handles
-
-	updateMatrixWorld( force ) {
-
-		const space = ( this.mode === 'scale' ) ? 'local' : this.space; // scale always oriented to local rotation
-
-		const quaternion = ( space === 'local' ) ? this.worldQuaternion : _identityQuaternion;
-
-		// Show only gizmos for current transform mode
-
-		this.gizmo[ 'translate' ].visible = this.mode === 'translate';
-		this.gizmo[ 'rotate' ].visible = this.mode === 'rotate';
-		this.gizmo[ 'scale' ].visible = this.mode === 'scale';
-
-		this.helper[ 'translate' ].visible = this.mode === 'translate';
-		this.helper[ 'rotate' ].visible = this.mode === 'rotate';
-		this.helper[ 'scale' ].visible = this.mode === 'scale';
-
-
-		let handles = [];
-		handles = handles.concat( this.picker[ this.mode ].children );
-		handles = handles.concat( this.gizmo[ this.mode ].children );
-		handles = handles.concat( this.helper[ this.mode ].children );
-
-		for ( let i = 0; i < handles.length; i ++ ) {
-
-			const handle = handles[ i ];
-
-			// hide aligned to camera
-
-			handle.visible = true;
-			handle.rotation.set( 0, 0, 0 );
-			handle.position.copy( this.worldPosition );
-
-			let factor;
-
-			if ( this.camera.isOrthographicCamera ) {
-
-				factor = ( this.camera.top - this.camera.bottom ) / this.camera.zoom;
-
-			} else {
-
-				factor = this.worldPosition.distanceTo( this.cameraPosition ) * Math.min( 1.9 * Math.tan( Math.PI * this.camera.fov / 360 ) / this.camera.zoom, 7 );
-
-			}
-
-			handle.scale.set( 1, 1, 1 ).multiplyScalar( factor * this.size / 4 );
-
-			// TODO: simplify helpers and consider decoupling from gizmo
-
-			if ( handle.tag === 'helper' ) {
-
-				handle.visible = false;
-
-				if ( handle.name === 'AXIS' ) {
-
-					handle.position.copy( this.worldPositionStart );
-					handle.visible = !! this.axis;
-
-					if ( this.axis === 'X' ) {
-
-						_tempQuaternion.setFromEuler( _tempEuler.set( 0, 0, 0 ) );
-						handle.quaternion.copy( quaternion ).multiply( _tempQuaternion );
-
-						if ( Math.abs( _alignVector.copy( _unitX ).applyQuaternion( quaternion ).dot( this.eye ) ) > 0.9 ) {
-
-							handle.visible = false;
-
-						}
-
-					}
-
-					if ( this.axis === 'Y' ) {
-
-						_tempQuaternion.setFromEuler( _tempEuler.set( 0, 0, Math.PI / 2 ) );
-						handle.quaternion.copy( quaternion ).multiply( _tempQuaternion );
-
-						if ( Math.abs( _alignVector.copy( _unitY ).applyQuaternion( quaternion ).dot( this.eye ) ) > 0.9 ) {
-
-							handle.visible = false;
-
-						}
-
-					}
-
-					if ( this.axis === 'Z' ) {
-
-						_tempQuaternion.setFromEuler( _tempEuler.set( 0, Math.PI / 2, 0 ) );
-						handle.quaternion.copy( quaternion ).multiply( _tempQuaternion );
-
-						if ( Math.abs( _alignVector.copy( _unitZ ).applyQuaternion( quaternion ).dot( this.eye ) ) > 0.9 ) {
-
-							handle.visible = false;
-
-						}
-
-					}
-
-					if ( this.axis === 'XYZE' ) {
-
-						_tempQuaternion.setFromEuler( _tempEuler.set( 0, Math.PI / 2, 0 ) );
-						_alignVector.copy( this.rotationAxis );
-						handle.quaternion.setFromRotationMatrix( _lookAtMatrix.lookAt( _zeroVector, _alignVector, _unitY ) );
-						handle.quaternion.multiply( _tempQuaternion );
-						handle.visible = this.dragging;
-
-					}
-
-					if ( this.axis === 'E' ) {
-
-						handle.visible = false;
-
-					}
-
-
-				} else if ( handle.name === 'START' ) {
-
-					handle.position.copy( this.worldPositionStart );
-					handle.visible = this.dragging;
-
-				} else if ( handle.name === 'END' ) {
-
-					handle.position.copy( this.worldPosition );
-					handle.visible = this.dragging;
-
-				} else if ( handle.name === 'DELTA' ) {
-
-					handle.position.copy( this.worldPositionStart );
-					handle.quaternion.copy( this.worldQuaternionStart );
-					_tempVector.set( 1e-10, 1e-10, 1e-10 ).add( this.worldPositionStart ).sub( this.worldPosition ).multiplyScalar( - 1 );
-					_tempVector.applyQuaternion( this.worldQuaternionStart.clone().invert() );
-					handle.scale.copy( _tempVector );
-					handle.visible = this.dragging;
-
-				} else {
-
-					handle.quaternion.copy( quaternion );
-
-					if ( this.dragging ) {
-
-						handle.position.copy( this.worldPositionStart );
-
-					} else {
-
-						handle.position.copy( this.worldPosition );
-
-					}
-
-					if ( this.axis ) {
-
-						handle.visible = this.axis.search( handle.name ) !== - 1;
-
-					}
-
-				}
-
-				// If updating helper, skip rest of the loop
-				continue;
-
-			}
-
-			// Align handles to current local or world rotation
-
-			handle.quaternion.copy( quaternion );
-
-			if ( this.mode === 'translate' || this.mode === 'scale' ) {
-
-				// Hide translate and scale axis facing the camera
-
-				const AXIS_HIDE_TRESHOLD = 0.99;
-				const PLANE_HIDE_TRESHOLD = 0.2;
-
-				if ( handle.name === 'X' ) {
-
-					if ( Math.abs( _alignVector.copy( _unitX ).applyQuaternion( quaternion ).dot( this.eye ) ) > AXIS_HIDE_TRESHOLD ) {
-
-						handle.scale.set( 1e-10, 1e-10, 1e-10 );
-						handle.visible = false;
-
-					}
-
-				}
-
-				if ( handle.name === 'Y' ) {
-
-					if ( Math.abs( _alignVector.copy( _unitY ).applyQuaternion( quaternion ).dot( this.eye ) ) > AXIS_HIDE_TRESHOLD ) {
-
-						handle.scale.set( 1e-10, 1e-10, 1e-10 );
-						handle.visible = false;
-
-					}
-
-				}
-
-				if ( handle.name === 'Z' ) {
-
-					if ( Math.abs( _alignVector.copy( _unitZ ).applyQuaternion( quaternion ).dot( this.eye ) ) > AXIS_HIDE_TRESHOLD ) {
-
-						handle.scale.set( 1e-10, 1e-10, 1e-10 );
-						handle.visible = false;
-
-					}
-
-				}
-
-				if ( handle.name === 'XY' ) {
-
-					if ( Math.abs( _alignVector.copy( _unitZ ).applyQuaternion( quaternion ).dot( this.eye ) ) < PLANE_HIDE_TRESHOLD ) {
-
-						handle.scale.set( 1e-10, 1e-10, 1e-10 );
-						handle.visible = false;
-
-					}
-
-				}
-
-				if ( handle.name === 'YZ' ) {
-
-					if ( Math.abs( _alignVector.copy( _unitX ).applyQuaternion( quaternion ).dot( this.eye ) ) < PLANE_HIDE_TRESHOLD ) {
-
-						handle.scale.set( 1e-10, 1e-10, 1e-10 );
-						handle.visible = false;
-
-					}
-
-				}
-
-				if ( handle.name === 'XZ' ) {
-
-					if ( Math.abs( _alignVector.copy( _unitY ).applyQuaternion( quaternion ).dot( this.eye ) ) < PLANE_HIDE_TRESHOLD ) {
-
-						handle.scale.set( 1e-10, 1e-10, 1e-10 );
-						handle.visible = false;
-
-					}
-
-				}
-
-			} else if ( this.mode === 'rotate' ) {
-
-				// Align handles to current local or world rotation
-
-				_tempQuaternion2.copy( quaternion );
-				_alignVector.copy( this.eye ).applyQuaternion( _tempQuaternion.copy( quaternion ).invert() );
-
-				if ( handle.name.search( 'E' ) !== - 1 ) {
-
-					handle.quaternion.setFromRotationMatrix( _lookAtMatrix.lookAt( this.eye, _zeroVector, _unitY ) );
-
-				}
-
-				if ( handle.name === 'X' ) {
-
-					_tempQuaternion.setFromAxisAngle( _unitX, Math.atan2( - _alignVector.y, _alignVector.z ) );
-					_tempQuaternion.multiplyQuaternions( _tempQuaternion2, _tempQuaternion );
-					handle.quaternion.copy( _tempQuaternion );
-
-				}
-
-				if ( handle.name === 'Y' ) {
-
-					_tempQuaternion.setFromAxisAngle( _unitY, Math.atan2( _alignVector.x, _alignVector.z ) );
-					_tempQuaternion.multiplyQuaternions( _tempQuaternion2, _tempQuaternion );
-					handle.quaternion.copy( _tempQuaternion );
-
-				}
-
-				if ( handle.name === 'Z' ) {
-
-					_tempQuaternion.setFromAxisAngle( _unitZ, Math.atan2( _alignVector.y, _alignVector.x ) );
-					_tempQuaternion.multiplyQuaternions( _tempQuaternion2, _tempQuaternion );
-					handle.quaternion.copy( _tempQuaternion );
-
-				}
-
-			}
-
-			// Hide disabled axes
-			handle.visible = handle.visible && ( handle.name.indexOf( 'X' ) === - 1 || this.showX );
-			handle.visible = handle.visible && ( handle.name.indexOf( 'Y' ) === - 1 || this.showY );
-			handle.visible = handle.visible && ( handle.name.indexOf( 'Z' ) === - 1 || this.showZ );
-			handle.visible = handle.visible && ( handle.name.indexOf( 'E' ) === - 1 || ( this.showX && this.showY && this.showZ ) );
-
-			// highlight selected axis
-
-			handle.material._color = handle.material._color || handle.material.color.clone();
-			handle.material._opacity = handle.material._opacity || handle.material.opacity;
-
-			handle.material.color.copy( handle.material._color );
-			handle.material.opacity = handle.material._opacity;
-
-			if ( this.enabled && this.axis ) {
-
-				if ( handle.name === this.axis ) {
-
-					handle.material.color.setHex( 0xffff00 );
-					handle.material.opacity = 1.0;
-
-				} else if ( this.axis.split( '' ).some( function ( a ) {
-
-					return handle.name === a;
-
-				} ) ) {
-
-					handle.material.color.setHex( 0xffff00 );
-					handle.material.opacity = 1.0;
-
-				}
-
-			}
-
-		}
-
-		super.updateMatrixWorld( force );
-
-	}
-
-}
-
-TransformControlsGizmo.prototype.isTransformControlsGizmo = true;
-
-//
-
-class TransformControlsPlane extends Mesh {
-
-	constructor() {
-
-		super(
-			new PlaneGeometry( 100000, 100000, 2, 2 ),
-			new MeshBasicMaterial( { visible: false, wireframe: true, side: DoubleSide, transparent: true, opacity: 0.1, toneMapped: false } )
-		);
-
-		this.type = 'TransformControlsPlane';
-
-	}
-
-	updateMatrixWorld( force ) {
-
-		let space = this.space;
-
-		this.position.copy( this.worldPosition );
-
-		if ( this.mode === 'scale' ) space = 'local'; // scale always oriented to local rotation
-
-		_v1.copy( _unitX ).applyQuaternion( space === 'local' ? this.worldQuaternion : _identityQuaternion );
-		_v2$1.copy( _unitY ).applyQuaternion( space === 'local' ? this.worldQuaternion : _identityQuaternion );
-		_v3.copy( _unitZ ).applyQuaternion( space === 'local' ? this.worldQuaternion : _identityQuaternion );
-
-		// Align the plane for current transform mode, axis and space.
-
-		_alignVector.copy( _v2$1 );
-
-		switch ( this.mode ) {
-
-			case 'translate':
-			case 'scale':
-				switch ( this.axis ) {
-
-					case 'X':
-						_alignVector.copy( this.eye ).cross( _v1 );
-						_dirVector.copy( _v1 ).cross( _alignVector );
-						break;
-					case 'Y':
-						_alignVector.copy( this.eye ).cross( _v2$1 );
-						_dirVector.copy( _v2$1 ).cross( _alignVector );
-						break;
-					case 'Z':
-						_alignVector.copy( this.eye ).cross( _v3 );
-						_dirVector.copy( _v3 ).cross( _alignVector );
-						break;
-					case 'XY':
-						_dirVector.copy( _v3 );
-						break;
-					case 'YZ':
-						_dirVector.copy( _v1 );
-						break;
-					case 'XZ':
-						_alignVector.copy( _v3 );
-						_dirVector.copy( _v2$1 );
-						break;
-					case 'XYZ':
-					case 'E':
-						_dirVector.set( 0, 0, 0 );
-						break;
-
-				}
-
-				break;
-			case 'rotate':
-			default:
-				// special case for rotate
-				_dirVector.set( 0, 0, 0 );
-
-		}
-
-		if ( _dirVector.length() === 0 ) {
-
-			// If in rotate mode, make the plane parallel to camera
-			this.quaternion.copy( this.cameraQuaternion );
-
-		} else {
-
-			_tempMatrix.lookAt( _tempVector.set( 0, 0, 0 ), _dirVector, _alignVector );
-
-			this.quaternion.setFromRotationMatrix( _tempMatrix );
-
-		}
-
-		super.updateMatrixWorld( force );
-
-	}
-
-}
-
-TransformControlsPlane.prototype.isTransformControlsPlane = true;
-
-const _box$1 = new Box3();
-const _vector$1 = new Vector3();
-
-class LineSegmentsGeometry extends InstancedBufferGeometry {
-
-	constructor() {
-
-		super();
-
-		this.type = 'LineSegmentsGeometry';
-
-		const positions = [ - 1, 2, 0, 1, 2, 0, - 1, 1, 0, 1, 1, 0, - 1, 0, 0, 1, 0, 0, - 1, - 1, 0, 1, - 1, 0 ];
-		const uvs = [ - 1, 2, 1, 2, - 1, 1, 1, 1, - 1, - 1, 1, - 1, - 1, - 2, 1, - 2 ];
-		const index = [ 0, 2, 1, 2, 3, 1, 2, 4, 3, 4, 5, 3, 4, 6, 5, 6, 7, 5 ];
-
-		this.setIndex( index );
-		this.setAttribute( 'position', new Float32BufferAttribute( positions, 3 ) );
-		this.setAttribute( 'uv', new Float32BufferAttribute( uvs, 2 ) );
-
-	}
-
-	applyMatrix4( matrix ) {
-
-		const start = this.attributes.instanceStart;
-		const end = this.attributes.instanceEnd;
-
-		if ( start !== undefined ) {
-
-			start.applyMatrix4( matrix );
-
-			end.applyMatrix4( matrix );
-
-			start.needsUpdate = true;
-
-		}
-
-		if ( this.boundingBox !== null ) {
-
-			this.computeBoundingBox();
-
-		}
-
-		if ( this.boundingSphere !== null ) {
-
-			this.computeBoundingSphere();
-
-		}
-
-		return this;
-
-	}
-
-	setPositions( array ) {
-
-		let lineSegments;
-
-		if ( array instanceof Float32Array ) {
-
-			lineSegments = array;
-
-		} else if ( Array.isArray( array ) ) {
-
-			lineSegments = new Float32Array( array );
-
-		}
-
-		const instanceBuffer = new InstancedInterleavedBuffer( lineSegments, 6, 1 ); // xyz, xyz
-
-		this.setAttribute( 'instanceStart', new InterleavedBufferAttribute( instanceBuffer, 3, 0 ) ); // xyz
-		this.setAttribute( 'instanceEnd', new InterleavedBufferAttribute( instanceBuffer, 3, 3 ) ); // xyz
-
-		//
-
-		this.computeBoundingBox();
-		this.computeBoundingSphere();
-
-		return this;
-
-	}
-
-	setColors( array ) {
-
-		let colors;
-
-		if ( array instanceof Float32Array ) {
-
-			colors = array;
-
-		} else if ( Array.isArray( array ) ) {
-
-			colors = new Float32Array( array );
-
-		}
-
-		const instanceColorBuffer = new InstancedInterleavedBuffer( colors, 6, 1 ); // rgb, rgb
-
-		this.setAttribute( 'instanceColorStart', new InterleavedBufferAttribute( instanceColorBuffer, 3, 0 ) ); // rgb
-		this.setAttribute( 'instanceColorEnd', new InterleavedBufferAttribute( instanceColorBuffer, 3, 3 ) ); // rgb
-
-		return this;
-
-	}
-
-	fromWireframeGeometry( geometry ) {
-
-		this.setPositions( geometry.attributes.position.array );
-
-		return this;
-
-	}
-
-	fromEdgesGeometry( geometry ) {
-
-		this.setPositions( geometry.attributes.position.array );
-
-		return this;
-
-	}
-
-	fromMesh( mesh ) {
-
-		this.fromWireframeGeometry( new WireframeGeometry( mesh.geometry ) );
-
-		// set colors, maybe
-
-		return this;
-
-	}
-
-	fromLineSegments( lineSegments ) {
-
-		const geometry = lineSegments.geometry;
-
-		if ( geometry.isGeometry ) {
-
-			console.error( 'THREE.LineSegmentsGeometry no longer supports Geometry. Use THREE.BufferGeometry instead.' );
-			return;
-
-		} else if ( geometry.isBufferGeometry ) {
-
-			this.setPositions( geometry.attributes.position.array ); // assumes non-indexed
-
-		}
-
-		// set colors, maybe
-
-		return this;
-
-	}
-
-	computeBoundingBox() {
-
-		if ( this.boundingBox === null ) {
-
-			this.boundingBox = new Box3();
-
-		}
-
-		const start = this.attributes.instanceStart;
-		const end = this.attributes.instanceEnd;
-
-		if ( start !== undefined && end !== undefined ) {
-
-			this.boundingBox.setFromBufferAttribute( start );
-
-			_box$1.setFromBufferAttribute( end );
-
-			this.boundingBox.union( _box$1 );
-
-		}
-
-	}
-
-	computeBoundingSphere() {
-
-		if ( this.boundingSphere === null ) {
-
-			this.boundingSphere = new Sphere();
-
-		}
-
-		if ( this.boundingBox === null ) {
-
-			this.computeBoundingBox();
-
-		}
-
-		const start = this.attributes.instanceStart;
-		const end = this.attributes.instanceEnd;
-
-		if ( start !== undefined && end !== undefined ) {
-
-			const center = this.boundingSphere.center;
-
-			this.boundingBox.getCenter( center );
-
-			let maxRadiusSq = 0;
-
-			for ( let i = 0, il = start.count; i < il; i ++ ) {
-
-				_vector$1.fromBufferAttribute( start, i );
-				maxRadiusSq = Math.max( maxRadiusSq, center.distanceToSquared( _vector$1 ) );
-
-				_vector$1.fromBufferAttribute( end, i );
-				maxRadiusSq = Math.max( maxRadiusSq, center.distanceToSquared( _vector$1 ) );
-
-			}
-
-			this.boundingSphere.radius = Math.sqrt( maxRadiusSq );
-
-			if ( isNaN( this.boundingSphere.radius ) ) {
-
-				console.error( 'THREE.LineSegmentsGeometry.computeBoundingSphere(): Computed radius is NaN. The instanced position data is likely to have NaN values.', this );
-
-			}
-
-		}
-
-	}
-
-	toJSON() {
-
-		// todo
-
-	}
-
-	applyMatrix( matrix ) {
-
-		console.warn( 'THREE.LineSegmentsGeometry: applyMatrix() has been renamed to applyMatrix4().' );
-
-		return this.applyMatrix4( matrix );
-
-	}
-
-}
-
-LineSegmentsGeometry.prototype.isLineSegmentsGeometry = true;
-
-/**
- * parameters = {
- *  color: <hex>,
- *  linewidth: <float>,
- *  dashed: <boolean>,
- *  dashScale: <float>,
- *  dashSize: <float>,
- *  dashOffset: <float>,
- *  gapSize: <float>,
- *  resolution: <Vector2>, // to be set by renderer
- * }
- */
-
-
-UniformsLib.line = {
-
-	worldUnits: { value: 1 },
-	linewidth: { value: 1 },
-	resolution: { value: new Vector2( 1, 1 ) },
-	dashOffset: { value: 0 },
-	dashScale: { value: 1 },
-	dashSize: { value: 1 },
-	gapSize: { value: 1 } // todo FIX - maybe change to totalSize
-
-};
-
-ShaderLib[ 'line' ] = {
-
-	uniforms: UniformsUtils.merge( [
-		UniformsLib.common,
-		UniformsLib.fog,
-		UniformsLib.line
-	] ),
-
-	vertexShader:
-	/* glsl */`
-		#include <common>
-		#include <color_pars_vertex>
-		#include <fog_pars_vertex>
-		#include <logdepthbuf_pars_vertex>
-		#include <clipping_planes_pars_vertex>
-
-		uniform float linewidth;
-		uniform vec2 resolution;
-
-		attribute vec3 instanceStart;
-		attribute vec3 instanceEnd;
-
-		attribute vec3 instanceColorStart;
-		attribute vec3 instanceColorEnd;
-
-		#ifdef WORLD_UNITS
-
-			varying vec4 worldPos;
-			varying vec3 worldStart;
-			varying vec3 worldEnd;
-
-			#ifdef USE_DASH
-
-				varying vec2 vUv;
-
-			#endif
-
-		#else
-
-			varying vec2 vUv;
-
-		#endif
-
-		#ifdef USE_DASH
-
-			uniform float dashScale;
-			attribute float instanceDistanceStart;
-			attribute float instanceDistanceEnd;
-			varying float vLineDistance;
-
-		#endif
-
-		void trimSegment( const in vec4 start, inout vec4 end ) {
-
-			// trim end segment so it terminates between the camera plane and the near plane
-
-			// conservative estimate of the near plane
-			float a = projectionMatrix[ 2 ][ 2 ]; // 3nd entry in 3th column
-			float b = projectionMatrix[ 3 ][ 2 ]; // 3nd entry in 4th column
-			float nearEstimate = - 0.5 * b / a;
-
-			float alpha = ( nearEstimate - start.z ) / ( end.z - start.z );
-
-			end.xyz = mix( start.xyz, end.xyz, alpha );
-
-		}
-
-		void main() {
-
-			#ifdef USE_COLOR
-
-				vColor.xyz = ( position.y < 0.5 ) ? instanceColorStart : instanceColorEnd;
-
-			#endif
-
-			#ifdef USE_DASH
-
-				vLineDistance = ( position.y < 0.5 ) ? dashScale * instanceDistanceStart : dashScale * instanceDistanceEnd;
-				vUv = uv;
-
-			#endif
-
-			float aspect = resolution.x / resolution.y;
-
-			// camera space
-			vec4 start = modelViewMatrix * vec4( instanceStart, 1.0 );
-			vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );
-
-			#ifdef WORLD_UNITS
-
-				worldStart = start.xyz;
-				worldEnd = end.xyz;
-
-			#else
-
-				vUv = uv;
-
-			#endif
-
-			// special case for perspective projection, and segments that terminate either in, or behind, the camera plane
-			// clearly the gpu firmware has a way of addressing this issue when projecting into ndc space
-			// but we need to perform ndc-space calculations in the shader, so we must address this issue directly
-			// perhaps there is a more elegant solution -- WestLangley
-
-			bool perspective = ( projectionMatrix[ 2 ][ 3 ] == - 1.0 ); // 4th entry in the 3rd column
-
-			if ( perspective ) {
-
-				if ( start.z < 0.0 && end.z >= 0.0 ) {
-
-					trimSegment( start, end );
-
-				} else if ( end.z < 0.0 && start.z >= 0.0 ) {
-
-					trimSegment( end, start );
-
-				}
-
-			}
-
-			// clip space
-			vec4 clipStart = projectionMatrix * start;
-			vec4 clipEnd = projectionMatrix * end;
-
-			// ndc space
-			vec3 ndcStart = clipStart.xyz / clipStart.w;
-			vec3 ndcEnd = clipEnd.xyz / clipEnd.w;
-
-			// direction
-			vec2 dir = ndcEnd.xy - ndcStart.xy;
-
-			// account for clip-space aspect ratio
-			dir.x *= aspect;
-			dir = normalize( dir );
-
-			#ifdef WORLD_UNITS
-
-				// get the offset direction as perpendicular to the view vector
-				vec3 worldDir = normalize( end.xyz - start.xyz );
-				vec3 offset;
-				if ( position.y < 0.5 ) {
-
-					offset = normalize( cross( start.xyz, worldDir ) );
-
-				} else {
-
-					offset = normalize( cross( end.xyz, worldDir ) );
-
-				}
-
-				// sign flip
-				if ( position.x < 0.0 ) offset *= - 1.0;
-
-				float forwardOffset = dot( worldDir, vec3( 0.0, 0.0, 1.0 ) );
-
-				// don't extend the line if we're rendering dashes because we
-				// won't be rendering the endcaps
-				#ifndef USE_DASH
-
-					// extend the line bounds to encompass  endcaps
-					start.xyz += - worldDir * linewidth * 0.5;
-					end.xyz += worldDir * linewidth * 0.5;
-
-					// shift the position of the quad so it hugs the forward edge of the line
-					offset.xy -= dir * forwardOffset;
-					offset.z += 0.5;
-
-				#endif
-
-				// endcaps
-				if ( position.y > 1.0 || position.y < 0.0 ) {
-
-					offset.xy += dir * 2.0 * forwardOffset;
-
-				}
-
-				// adjust for linewidth
-				offset *= linewidth * 0.5;
-
-				// set the world position
-				worldPos = ( position.y < 0.5 ) ? start : end;
-				worldPos.xyz += offset;
-
-				// project the worldpos
-				vec4 clip = projectionMatrix * worldPos;
-
-				// shift the depth of the projected points so the line
-				// segements overlap neatly
-				vec3 clipPose = ( position.y < 0.5 ) ? ndcStart : ndcEnd;
-				clip.z = clipPose.z * clip.w;
-
-			#else
-
-				vec2 offset = vec2( dir.y, - dir.x );
-				// undo aspect ratio adjustment
-				dir.x /= aspect;
-				offset.x /= aspect;
-
-				// sign flip
-				if ( position.x < 0.0 ) offset *= - 1.0;
-
-				// endcaps
-				if ( position.y < 0.0 ) {
-
-					offset += - dir;
-
-				} else if ( position.y > 1.0 ) {
-
-					offset += dir;
-
-				}
-
-				// adjust for linewidth
-				offset *= linewidth;
-
-				// adjust for clip-space to screen-space conversion // maybe resolution should be based on viewport ...
-				offset /= resolution.y;
-
-				// select end
-				vec4 clip = ( position.y < 0.5 ) ? clipStart : clipEnd;
-
-				// back to clip space
-				offset *= clip.w;
-
-				clip.xy += offset;
-
-			#endif
-
-			gl_Position = clip;
-
-			vec4 mvPosition = ( position.y < 0.5 ) ? start : end; // this is an approximation
-
-			#include <logdepthbuf_vertex>
-			#include <clipping_planes_vertex>
-			#include <fog_vertex>
-
-		}
-		`,
-
-	fragmentShader:
-	/* glsl */`
-		uniform vec3 diffuse;
-		uniform float opacity;
-		uniform float linewidth;
-
-		#ifdef USE_DASH
-
-			uniform float dashOffset;
-			uniform float dashSize;
-			uniform float gapSize;
-
-		#endif
-
-		varying float vLineDistance;
-
-		#ifdef WORLD_UNITS
-
-			varying vec4 worldPos;
-			varying vec3 worldStart;
-			varying vec3 worldEnd;
-
-			#ifdef USE_DASH
-
-				varying vec2 vUv;
-
-			#endif
-
-		#else
-
-			varying vec2 vUv;
-
-		#endif
-
-		#include <common>
-		#include <color_pars_fragment>
-		#include <fog_pars_fragment>
-		#include <logdepthbuf_pars_fragment>
-		#include <clipping_planes_pars_fragment>
-
-		vec2 closestLineToLine(vec3 p1, vec3 p2, vec3 p3, vec3 p4) {
-
-			float mua;
-			float mub;
-
-			vec3 p13 = p1 - p3;
-			vec3 p43 = p4 - p3;
-
-			vec3 p21 = p2 - p1;
-
-			float d1343 = dot( p13, p43 );
-			float d4321 = dot( p43, p21 );
-			float d1321 = dot( p13, p21 );
-			float d4343 = dot( p43, p43 );
-			float d2121 = dot( p21, p21 );
-
-			float denom = d2121 * d4343 - d4321 * d4321;
-
-			float numer = d1343 * d4321 - d1321 * d4343;
-
-			mua = numer / denom;
-			mua = clamp( mua, 0.0, 1.0 );
-			mub = ( d1343 + d4321 * ( mua ) ) / d4343;
-			mub = clamp( mub, 0.0, 1.0 );
-
-			return vec2( mua, mub );
-
-		}
-
-		void main() {
-
-			#include <clipping_planes_fragment>
-
-			#ifdef USE_DASH
-
-				if ( vUv.y < - 1.0 || vUv.y > 1.0 ) discard; // discard endcaps
-
-				if ( mod( vLineDistance + dashOffset, dashSize + gapSize ) > dashSize ) discard; // todo - FIX
-
-			#endif
-
-			float alpha = opacity;
-
-			#ifdef WORLD_UNITS
-
-				// Find the closest points on the view ray and the line segment
-				vec3 rayEnd = normalize( worldPos.xyz ) * 1e5;
-				vec3 lineDir = worldEnd - worldStart;
-				vec2 params = closestLineToLine( worldStart, worldEnd, vec3( 0.0, 0.0, 0.0 ), rayEnd );
-
-				vec3 p1 = worldStart + lineDir * params.x;
-				vec3 p2 = rayEnd * params.y;
-				vec3 delta = p1 - p2;
-				float len = length( delta );
-				float norm = len / linewidth;
-
-				#ifndef USE_DASH
-
-					#ifdef USE_ALPHA_TO_COVERAGE
-
-						float dnorm = fwidth( norm );
-						alpha = 1.0 - smoothstep( 0.5 - dnorm, 0.5 + dnorm, norm );
-
-					#else
-
-						if ( norm > 0.5 ) {
-
-							discard;
-
-						}
-
-					#endif
-
-				#endif
-
-			#else
-
-				#ifdef USE_ALPHA_TO_COVERAGE
-
-					// artifacts appear on some hardware if a derivative is taken within a conditional
-					float a = vUv.x;
-					float b = ( vUv.y > 0.0 ) ? vUv.y - 1.0 : vUv.y + 1.0;
-					float len2 = a * a + b * b;
-					float dlen = fwidth( len2 );
-
-					if ( abs( vUv.y ) > 1.0 ) {
-
-						alpha = 1.0 - smoothstep( 1.0 - dlen, 1.0 + dlen, len2 );
-
-					}
-
-				#else
-
-					if ( abs( vUv.y ) > 1.0 ) {
-
-						float a = vUv.x;
-						float b = ( vUv.y > 0.0 ) ? vUv.y - 1.0 : vUv.y + 1.0;
-						float len2 = a * a + b * b;
-
-						if ( len2 > 1.0 ) discard;
-
-					}
-
-				#endif
-
-			#endif
-
-			vec4 diffuseColor = vec4( diffuse, alpha );
-
-			#include <logdepthbuf_fragment>
-			#include <color_fragment>
-
-			gl_FragColor = vec4( diffuseColor.rgb, alpha );
-
-			#include <tonemapping_fragment>
-			#include <encodings_fragment>
-			#include <fog_fragment>
-			#include <premultiplied_alpha_fragment>
-
-		}
-		`
-};
-
-class LineMaterial extends ShaderMaterial {
-
-	constructor( parameters ) {
-
-		super( {
-
-			type: 'LineMaterial',
-
-			uniforms: UniformsUtils.clone( ShaderLib[ 'line' ].uniforms ),
-
-			vertexShader: ShaderLib[ 'line' ].vertexShader,
-			fragmentShader: ShaderLib[ 'line' ].fragmentShader,
-
-			clipping: true // required for clipping support
-
-		} );
-
-		Object.defineProperties( this, {
-
-			color: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return this.uniforms.diffuse.value;
-
-				},
-
-				set: function ( value ) {
-
-					this.uniforms.diffuse.value = value;
-
-				}
-
-			},
-
-			worldUnits: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return 'WORLD_UNITS' in this.defines;
-
-				},
-
-				set: function ( value ) {
-
-					if ( value === true ) {
-
-						this.defines.WORLD_UNITS = '';
-
-					} else {
-
-						delete this.defines.WORLD_UNITS;
-
-					}
-
-				}
-
-			},
-
-			linewidth: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return this.uniforms.linewidth.value;
-
-				},
-
-				set: function ( value ) {
-
-					this.uniforms.linewidth.value = value;
-
-				}
-
-			},
-
-			dashed: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return Boolean( 'USE_DASH' in this.defines );
-
-				},
-
-				set( value ) {
-
-					if ( Boolean( value ) !== Boolean( 'USE_DASH' in this.defines ) ) {
-
-						this.needsUpdate = true;
-
-					}
-
-					if ( value === true ) {
-
-						this.defines.USE_DASH = '';
-
-					} else {
-
-						delete this.defines.USE_DASH;
-
-					}
-
-				}
-
-			},
-
-			dashScale: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return this.uniforms.dashScale.value;
-
-				},
-
-				set: function ( value ) {
-
-					this.uniforms.dashScale.value = value;
-
-				}
-
-			},
-
-			dashSize: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return this.uniforms.dashSize.value;
-
-				},
-
-				set: function ( value ) {
-
-					this.uniforms.dashSize.value = value;
-
-				}
-
-			},
-
-			dashOffset: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return this.uniforms.dashOffset.value;
-
-				},
-
-				set: function ( value ) {
-
-					this.uniforms.dashOffset.value = value;
-
-				}
-
-			},
-
-			gapSize: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return this.uniforms.gapSize.value;
-
-				},
-
-				set: function ( value ) {
-
-					this.uniforms.gapSize.value = value;
-
-				}
-
-			},
-
-			opacity: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return this.uniforms.opacity.value;
-
-				},
-
-				set: function ( value ) {
-
-					this.uniforms.opacity.value = value;
-
-				}
-
-			},
-
-			resolution: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return this.uniforms.resolution.value;
-
-				},
-
-				set: function ( value ) {
-
-					this.uniforms.resolution.value.copy( value );
-
-				}
-
-			},
-
-			alphaToCoverage: {
-
-				enumerable: true,
-
-				get: function () {
-
-					return Boolean( 'USE_ALPHA_TO_COVERAGE' in this.defines );
-
-				},
-
-				set: function ( value ) {
-
-					if ( Boolean( value ) !== Boolean( 'USE_ALPHA_TO_COVERAGE' in this.defines ) ) {
-
-						this.needsUpdate = true;
-
-					}
-
-					if ( value === true ) {
-
-						this.defines.USE_ALPHA_TO_COVERAGE = '';
-						this.extensions.derivatives = true;
-
-					} else {
-
-						delete this.defines.USE_ALPHA_TO_COVERAGE;
-						this.extensions.derivatives = false;
-
-					}
-
-				}
-
-			}
-
-		} );
-
-		this.setValues( parameters );
-
-	}
-
-}
-
-LineMaterial.prototype.isLineMaterial = true;
-
-const _start = new Vector3();
-const _end = new Vector3();
-
-const _start4 = new Vector4();
-const _end4 = new Vector4();
-
-const _ssOrigin = new Vector4();
-const _ssOrigin3 = new Vector3();
-const _mvMatrix = new Matrix4();
-const _line = new Line3();
-const _closestPoint = new Vector3();
-
-const _box = new Box3();
-const _sphere$1 = new Sphere();
-const _clipToWorldVector = new Vector4();
-
-// Returns the margin required to expand by in world space given the distance from the camera,
-// line width, resolution, and camera projection
-function getWorldSpaceHalfWidth( camera, distance, lineWidth, resolution ) {
-
-	// transform into clip space, adjust the x and y values by the pixel width offset, then
-	// transform back into world space to get world offset. Note clip space is [-1, 1] so full
-	// width does not need to be halved.
-	_clipToWorldVector.set( 0, 0, - distance, 1.0 ).applyMatrix4( camera.projectionMatrix );
-	_clipToWorldVector.multiplyScalar( 1.0 / _clipToWorldVector.w );
-	_clipToWorldVector.x = lineWidth / resolution.width;
-	_clipToWorldVector.y = lineWidth / resolution.height;
-	_clipToWorldVector.applyMatrix4( camera.projectionMatrixInverse );
-	_clipToWorldVector.multiplyScalar( 1.0 / _clipToWorldVector.w );
-
-	return Math.abs( Math.max( _clipToWorldVector.x, _clipToWorldVector.y ) );
-
-}
-
-class LineSegments2 extends Mesh {
-
-	constructor( geometry = new LineSegmentsGeometry(), material = new LineMaterial( { color: Math.random() * 0xffffff } ) ) {
-
-		super( geometry, material );
-
-		this.type = 'LineSegments2';
-
-	}
-
-	// for backwards-compatability, but could be a method of LineSegmentsGeometry...
-
-	computeLineDistances() {
-
-		const geometry = this.geometry;
-
-		const instanceStart = geometry.attributes.instanceStart;
-		const instanceEnd = geometry.attributes.instanceEnd;
-		const lineDistances = new Float32Array( 2 * instanceStart.count );
-
-		for ( let i = 0, j = 0, l = instanceStart.count; i < l; i ++, j += 2 ) {
-
-			_start.fromBufferAttribute( instanceStart, i );
-			_end.fromBufferAttribute( instanceEnd, i );
-
-			lineDistances[ j ] = ( j === 0 ) ? 0 : lineDistances[ j - 1 ];
-			lineDistances[ j + 1 ] = lineDistances[ j ] + _start.distanceTo( _end );
-
-		}
-
-		const instanceDistanceBuffer = new InstancedInterleavedBuffer( lineDistances, 2, 1 ); // d0, d1
-
-		geometry.setAttribute( 'instanceDistanceStart', new InterleavedBufferAttribute( instanceDistanceBuffer, 1, 0 ) ); // d0
-		geometry.setAttribute( 'instanceDistanceEnd', new InterleavedBufferAttribute( instanceDistanceBuffer, 1, 1 ) ); // d1
-
-		return this;
-
-	}
-
-	raycast( raycaster, intersects ) {
-
-		if ( raycaster.camera === null ) {
-
-			console.error( 'LineSegments2: "Raycaster.camera" needs to be set in order to raycast against LineSegments2.' );
-
-		}
-
-		const threshold = ( raycaster.params.Line2 !== undefined ) ? raycaster.params.Line2.threshold || 0 : 0;
-
-		const ray = raycaster.ray;
-		const camera = raycaster.camera;
-		const projectionMatrix = camera.projectionMatrix;
-
-		const matrixWorld = this.matrixWorld;
-		const geometry = this.geometry;
-		const material = this.material;
-		const resolution = material.resolution;
-		const lineWidth = material.linewidth + threshold;
-
-		const instanceStart = geometry.attributes.instanceStart;
-		const instanceEnd = geometry.attributes.instanceEnd;
-
-		// camera forward is negative
-		const near = - camera.near;
-
-		//
-
-		// check if we intersect the sphere bounds
-		if ( geometry.boundingSphere === null ) {
-
-			geometry.computeBoundingSphere();
-
-		}
-
-		_sphere$1.copy( geometry.boundingSphere ).applyMatrix4( matrixWorld );
-		const distanceToSphere = Math.max( camera.near, _sphere$1.distanceToPoint( ray.origin ) );
-
-		// increase the sphere bounds by the worst case line screen space width
-		const sphereMargin = getWorldSpaceHalfWidth( camera, distanceToSphere, lineWidth, resolution );
-		_sphere$1.radius += sphereMargin;
-
-		if ( raycaster.ray.intersectsSphere( _sphere$1 ) === false ) {
-
-			return;
-
-		}
-
-		//
-
-		// check if we intersect the box bounds
-		if ( geometry.boundingBox === null ) {
-
-			geometry.computeBoundingBox();
-
-		}
-
-		_box.copy( geometry.boundingBox ).applyMatrix4( matrixWorld );
-		const distanceToBox = Math.max( camera.near, _box.distanceToPoint( ray.origin ) );
-
-		// increase the box bounds by the worst case line screen space width
-		const boxMargin = getWorldSpaceHalfWidth( camera, distanceToBox, lineWidth, resolution );
-		_box.max.x += boxMargin;
-		_box.max.y += boxMargin;
-		_box.max.z += boxMargin;
-		_box.min.x -= boxMargin;
-		_box.min.y -= boxMargin;
-		_box.min.z -= boxMargin;
-
-		if ( raycaster.ray.intersectsBox( _box ) === false ) {
-
-			return;
-
-		}
-
-		//
-
-		// pick a point 1 unit out along the ray to avoid the ray origin
-		// sitting at the camera origin which will cause "w" to be 0 when
-		// applying the projection matrix.
-		ray.at( 1, _ssOrigin );
-
-		// ndc space [ - 1.0, 1.0 ]
-		_ssOrigin.w = 1;
-		_ssOrigin.applyMatrix4( camera.matrixWorldInverse );
-		_ssOrigin.applyMatrix4( projectionMatrix );
-		_ssOrigin.multiplyScalar( 1 / _ssOrigin.w );
-
-		// screen space
-		_ssOrigin.x *= resolution.x / 2;
-		_ssOrigin.y *= resolution.y / 2;
-		_ssOrigin.z = 0;
-
-		_ssOrigin3.copy( _ssOrigin );
-
-		_mvMatrix.multiplyMatrices( camera.matrixWorldInverse, matrixWorld );
-
-		for ( let i = 0, l = instanceStart.count; i < l; i ++ ) {
-
-			_start4.fromBufferAttribute( instanceStart, i );
-			_end4.fromBufferAttribute( instanceEnd, i );
-
-			_start4.w = 1;
-			_end4.w = 1;
-
-			// camera space
-			_start4.applyMatrix4( _mvMatrix );
-			_end4.applyMatrix4( _mvMatrix );
-
-			// skip the segment if it's entirely behind the camera
-			var isBehindCameraNear = _start4.z > near && _end4.z > near;
-			if ( isBehindCameraNear ) {
-
-				continue;
-
-			}
-
-			// trim the segment if it extends behind camera near
-			if ( _start4.z > near ) {
-
-				const deltaDist = _start4.z - _end4.z;
-				const t = ( _start4.z - near ) / deltaDist;
-				_start4.lerp( _end4, t );
-
-			} else if ( _end4.z > near ) {
-
-				const deltaDist = _end4.z - _start4.z;
-				const t = ( _end4.z - near ) / deltaDist;
-				_end4.lerp( _start4, t );
-
-			}
-
-			// clip space
-			_start4.applyMatrix4( projectionMatrix );
-			_end4.applyMatrix4( projectionMatrix );
-
-			// ndc space [ - 1.0, 1.0 ]
-			_start4.multiplyScalar( 1 / _start4.w );
-			_end4.multiplyScalar( 1 / _end4.w );
-
-			// screen space
-			_start4.x *= resolution.x / 2;
-			_start4.y *= resolution.y / 2;
-
-			_end4.x *= resolution.x / 2;
-			_end4.y *= resolution.y / 2;
-
-			// create 2d segment
-			_line.start.copy( _start4 );
-			_line.start.z = 0;
-
-			_line.end.copy( _end4 );
-			_line.end.z = 0;
-
-			// get closest point on ray to segment
-			const param = _line.closestPointToPointParameter( _ssOrigin3, true );
-			_line.at( param, _closestPoint );
-
-			// check if the intersection point is within clip space
-			const zPos = MathUtils.lerp( _start4.z, _end4.z, param );
-			const isInClipSpace = zPos >= - 1 && zPos <= 1;
-
-			const isInside = _ssOrigin3.distanceTo( _closestPoint ) < lineWidth * 0.5;
-
-			if ( isInClipSpace && isInside ) {
-
-				_line.start.fromBufferAttribute( instanceStart, i );
-				_line.end.fromBufferAttribute( instanceEnd, i );
-
-				_line.start.applyMatrix4( matrixWorld );
-				_line.end.applyMatrix4( matrixWorld );
-
-				const pointOnLine = new Vector3();
-				const point = new Vector3();
-
-				ray.distanceSqToSegment( _line.start, _line.end, point, pointOnLine );
-
-				intersects.push( {
-
-					point: point,
-					pointOnLine: pointOnLine,
-					distance: ray.origin.distanceTo( point ),
-
-					object: this,
-					face: null,
-					faceIndex: i,
-					uv: null,
-					uv2: null,
-
-				} );
-
-			}
-
-		}
-
-	}
-
-}
-
-LineSegments2.prototype.isLineSegments2 = true;
-
 class ClippingEdges {
     constructor(clippingPlane) {
         this.edges = {};
@@ -100376,6 +96682,3700 @@ function computeBoundsTree( options ) {
 function disposeBoundsTree() {
 
 	this.boundsTree = null;
+
+}
+
+/**
+	 * @param  {Array<BufferGeometry>} geometries
+	 * @param  {Boolean} useGroups
+	 * @return {BufferGeometry}
+	 */
+function mergeBufferGeometries( geometries, useGroups = false ) {
+
+	const isIndexed = geometries[ 0 ].index !== null;
+
+	const attributesUsed = new Set( Object.keys( geometries[ 0 ].attributes ) );
+	const morphAttributesUsed = new Set( Object.keys( geometries[ 0 ].morphAttributes ) );
+
+	const attributes = {};
+	const morphAttributes = {};
+
+	const morphTargetsRelative = geometries[ 0 ].morphTargetsRelative;
+
+	const mergedGeometry = new BufferGeometry();
+
+	let offset = 0;
+
+	for ( let i = 0; i < geometries.length; ++ i ) {
+
+		const geometry = geometries[ i ];
+		let attributesCount = 0;
+
+		// ensure that all geometries are indexed, or none
+
+		if ( isIndexed !== ( geometry.index !== null ) ) {
+
+			console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. All geometries must have compatible attributes; make sure index attribute exists among all geometries, or in none of them.' );
+			return null;
+
+		}
+
+		// gather attributes, exit early if they're different
+
+		for ( const name in geometry.attributes ) {
+
+			if ( ! attributesUsed.has( name ) ) {
+
+				console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. All geometries must have compatible attributes; make sure "' + name + '" attribute exists among all geometries, or in none of them.' );
+				return null;
+
+			}
+
+			if ( attributes[ name ] === undefined ) attributes[ name ] = [];
+
+			attributes[ name ].push( geometry.attributes[ name ] );
+
+			attributesCount ++;
+
+		}
+
+		// ensure geometries have the same number of attributes
+
+		if ( attributesCount !== attributesUsed.size ) {
+
+			console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. Make sure all geometries have the same number of attributes.' );
+			return null;
+
+		}
+
+		// gather morph attributes, exit early if they're different
+
+		if ( morphTargetsRelative !== geometry.morphTargetsRelative ) {
+
+			console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. .morphTargetsRelative must be consistent throughout all geometries.' );
+			return null;
+
+		}
+
+		for ( const name in geometry.morphAttributes ) {
+
+			if ( ! morphAttributesUsed.has( name ) ) {
+
+				console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '.  .morphAttributes must be consistent throughout all geometries.' );
+				return null;
+
+			}
+
+			if ( morphAttributes[ name ] === undefined ) morphAttributes[ name ] = [];
+
+			morphAttributes[ name ].push( geometry.morphAttributes[ name ] );
+
+		}
+
+		// gather .userData
+
+		mergedGeometry.userData.mergedUserData = mergedGeometry.userData.mergedUserData || [];
+		mergedGeometry.userData.mergedUserData.push( geometry.userData );
+
+		if ( useGroups ) {
+
+			let count;
+
+			if ( isIndexed ) {
+
+				count = geometry.index.count;
+
+			} else if ( geometry.attributes.position !== undefined ) {
+
+				count = geometry.attributes.position.count;
+
+			} else {
+
+				console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed with geometry at index ' + i + '. The geometry must have either an index or a position attribute' );
+				return null;
+
+			}
+
+			mergedGeometry.addGroup( offset, count, i );
+
+			offset += count;
+
+		}
+
+	}
+
+	// merge indices
+
+	if ( isIndexed ) {
+
+		let indexOffset = 0;
+		const mergedIndex = [];
+
+		for ( let i = 0; i < geometries.length; ++ i ) {
+
+			const index = geometries[ i ].index;
+
+			for ( let j = 0; j < index.count; ++ j ) {
+
+				mergedIndex.push( index.getX( j ) + indexOffset );
+
+			}
+
+			indexOffset += geometries[ i ].attributes.position.count;
+
+		}
+
+		mergedGeometry.setIndex( mergedIndex );
+
+	}
+
+	// merge attributes
+
+	for ( const name in attributes ) {
+
+		const mergedAttribute = mergeBufferAttributes( attributes[ name ] );
+
+		if ( ! mergedAttribute ) {
+
+			console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed while trying to merge the ' + name + ' attribute.' );
+			return null;
+
+		}
+
+		mergedGeometry.setAttribute( name, mergedAttribute );
+
+	}
+
+	// merge morph attributes
+
+	for ( const name in morphAttributes ) {
+
+		const numMorphTargets = morphAttributes[ name ][ 0 ].length;
+
+		if ( numMorphTargets === 0 ) break;
+
+		mergedGeometry.morphAttributes = mergedGeometry.morphAttributes || {};
+		mergedGeometry.morphAttributes[ name ] = [];
+
+		for ( let i = 0; i < numMorphTargets; ++ i ) {
+
+			const morphAttributesToMerge = [];
+
+			for ( let j = 0; j < morphAttributes[ name ].length; ++ j ) {
+
+				morphAttributesToMerge.push( morphAttributes[ name ][ j ][ i ] );
+
+			}
+
+			const mergedMorphAttribute = mergeBufferAttributes( morphAttributesToMerge );
+
+			if ( ! mergedMorphAttribute ) {
+
+				console.error( 'THREE.BufferGeometryUtils: .mergeBufferGeometries() failed while trying to merge the ' + name + ' morphAttribute.' );
+				return null;
+
+			}
+
+			mergedGeometry.morphAttributes[ name ].push( mergedMorphAttribute );
+
+		}
+
+	}
+
+	return mergedGeometry;
+
+}
+
+/**
+ * @param {Array<BufferAttribute>} attributes
+ * @return {BufferAttribute}
+ */
+function mergeBufferAttributes( attributes ) {
+
+	let TypedArray;
+	let itemSize;
+	let normalized;
+	let arrayLength = 0;
+
+	for ( let i = 0; i < attributes.length; ++ i ) {
+
+		const attribute = attributes[ i ];
+
+		if ( attribute.isInterleavedBufferAttribute ) {
+
+			console.error( 'THREE.BufferGeometryUtils: .mergeBufferAttributes() failed. InterleavedBufferAttributes are not supported.' );
+			return null;
+
+		}
+
+		if ( TypedArray === undefined ) TypedArray = attribute.array.constructor;
+		if ( TypedArray !== attribute.array.constructor ) {
+
+			console.error( 'THREE.BufferGeometryUtils: .mergeBufferAttributes() failed. BufferAttribute.array must be of consistent array types across matching attributes.' );
+			return null;
+
+		}
+
+		if ( itemSize === undefined ) itemSize = attribute.itemSize;
+		if ( itemSize !== attribute.itemSize ) {
+
+			console.error( 'THREE.BufferGeometryUtils: .mergeBufferAttributes() failed. BufferAttribute.itemSize must be consistent across matching attributes.' );
+			return null;
+
+		}
+
+		if ( normalized === undefined ) normalized = attribute.normalized;
+		if ( normalized !== attribute.normalized ) {
+
+			console.error( 'THREE.BufferGeometryUtils: .mergeBufferAttributes() failed. BufferAttribute.normalized must be consistent across matching attributes.' );
+			return null;
+
+		}
+
+		arrayLength += attribute.array.length;
+
+	}
+
+	const array = new TypedArray( arrayLength );
+	let offset = 0;
+
+	for ( let i = 0; i < attributes.length; ++ i ) {
+
+		array.set( attributes[ i ].array, offset );
+
+		offset += attributes[ i ].array.length;
+
+	}
+
+	return new BufferAttribute( array, itemSize, normalized );
+
+}
+
+const nullIfcManagerErrorMessage = 'IfcManager is null!';
+
+class IFCModel extends Mesh {
+
+  constructor() {
+    super(...arguments);
+    this.modelID = IFCModel.modelIdCounter++;
+    this.ifcManager = null;
+    this.mesh = this;
+  }
+
+  static dispose() {
+    IFCModel.modelIdCounter = 0;
+  }
+
+  setIFCManager(manager) {
+    this.ifcManager = manager;
+  }
+
+  setWasmPath(path) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    this.ifcManager.setWasmPath(path);
+  }
+
+  close(scene) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    this.ifcManager.close(this.modelID, scene);
+  }
+
+  getExpressId(geometry, faceIndex) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    return this.ifcManager.getExpressId(geometry, faceIndex);
+  }
+
+  getAllItemsOfType(type, verbose) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    return this.ifcManager.getAllItemsOfType(this.modelID, type, verbose);
+  }
+
+  getItemProperties(id, recursive = false) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    return this.ifcManager.getItemProperties(this.modelID, id, recursive);
+  }
+
+  getPropertySets(id, recursive = false) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    return this.ifcManager.getPropertySets(this.modelID, id, recursive);
+  }
+
+  getTypeProperties(id, recursive = false) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    return this.ifcManager.getTypeProperties(this.modelID, id, recursive);
+  }
+
+  getIfcType(id) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    return this.ifcManager.getIfcType(this.modelID, id);
+  }
+
+  getSpatialStructure() {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    return this.ifcManager.getSpatialStructure(this.modelID);
+  }
+
+  getSubset(material) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    return this.ifcManager.getSubset(this.modelID, material);
+  }
+
+  removeSubset(material, customID) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    this.ifcManager.removeSubset(this.modelID, material, customID);
+  }
+
+  createSubset(config) {
+    if (this.ifcManager === null)
+      throw new Error(nullIfcManagerErrorMessage);
+    const modelConfig = {
+      ...config,
+      modelID: this.modelID
+    };
+    return this.ifcManager.createSubset(modelConfig);
+  }
+
+}
+
+IFCModel.modelIdCounter = 0;
+
+class IFCParser {
+
+  constructor(state, BVH) {
+    this.state = state;
+    this.BVH = BVH;
+    this.loadedModels = 0;
+    this.optionalCategories = {
+      [IFCSPACE]: true,
+      [IFCOPENINGELEMENT]: false
+    };
+    this.geometriesByMaterials = {};
+    this.loadingState = {
+      total: 0,
+      current: 0,
+      step: 0.1
+    };
+    this.currentWebIfcID = -1;
+    this.currentModelID = -1;
+  }
+
+  async setupOptionalCategories(config) {
+    this.optionalCategories = config;
+  }
+
+  async parse(buffer, coordinationMatrix) {
+    if (this.state.api.wasmModule === undefined)
+      await this.state.api.Init();
+    await this.newIfcModel(buffer);
+    this.loadedModels++;
+    if (coordinationMatrix) {
+      await this.state.api.SetGeometryTransformation(this.currentWebIfcID, coordinationMatrix);
+    }
+    return this.loadAllGeometry(this.currentWebIfcID);
+  }
+
+  getAndClearErrors(_modelId) {}
+
+  notifyProgress(loaded, total) {
+    if (this.state.onProgress)
+      this.state.onProgress({
+        loaded,
+        total
+      });
+  }
+
+  async newIfcModel(buffer) {
+    const data = new Uint8Array(buffer);
+    this.currentWebIfcID = await this.state.api.OpenModel(data, this.state.webIfcSettings);
+    this.currentModelID = this.state.useJSON ? this.loadedModels : this.currentWebIfcID;
+    this.state.models[this.currentModelID] = {
+      modelID: this.currentModelID,
+      mesh: {},
+      types: {},
+      jsonData: {}
+    };
+  }
+
+  async loadAllGeometry(modelID) {
+    this.addOptionalCategories(modelID);
+    await this.initializeLoadingState(modelID);
+    this.state.api.StreamAllMeshes(modelID, (mesh) => {
+      this.updateLoadingState();
+      this.streamMesh(modelID, mesh);
+    });
+    this.notifyLoadingEnded();
+    const geometries = [];
+    const materials = [];
+    Object.keys(this.geometriesByMaterials).forEach((key) => {
+      const geometriesByMaterial = this.geometriesByMaterials[key].geometries;
+      const merged = mergeBufferGeometries(geometriesByMaterial);
+      materials.push(this.geometriesByMaterials[key].material);
+      geometries.push(merged);
+    });
+    const combinedGeometry = mergeBufferGeometries(geometries, true);
+    this.cleanUpGeometryMemory(geometries);
+    if (this.BVH)
+      this.BVH.applyThreeMeshBVH(combinedGeometry);
+    const model = new IFCModel(combinedGeometry, materials);
+    this.state.models[this.currentModelID].mesh = model;
+    return model;
+  }
+
+  async initializeLoadingState(modelID) {
+    const shapes = await this.state.api.GetLineIDsWithType(modelID, IFCPRODUCTDEFINITIONSHAPE);
+    this.loadingState.total = shapes.size();
+    this.loadingState.current = 0;
+    this.loadingState.step = 0.1;
+  }
+
+  notifyLoadingEnded() {
+    this.notifyProgress(this.loadingState.total, this.loadingState.total);
+  }
+
+  updateLoadingState() {
+    const realCurrentItem = Math.min(this.loadingState.current++, this.loadingState.total);
+    if (realCurrentItem / this.loadingState.total >= this.loadingState.step) {
+      const currentProgress = Math.ceil(this.loadingState.total * this.loadingState.step);
+      this.notifyProgress(currentProgress, this.loadingState.total);
+      this.loadingState.step += 0.1;
+    }
+  }
+
+  addOptionalCategories(modelID) {
+    const optionalTypes = [];
+    for (let key in this.optionalCategories) {
+      if (this.optionalCategories.hasOwnProperty(key)) {
+        const category = parseInt(key);
+        if (this.optionalCategories[category])
+          optionalTypes.push(category);
+      }
+    }
+    this.state.api.StreamAllMeshesWithTypes(this.currentWebIfcID, optionalTypes, (mesh) => {
+      this.streamMesh(modelID, mesh);
+    });
+  }
+
+  streamMesh(modelID, mesh) {
+    const placedGeometries = mesh.geometries;
+    const size = placedGeometries.size();
+    for (let i = 0; i < size; i++) {
+      const placedGeometry = placedGeometries.get(i);
+      let itemMesh = this.getPlacedGeometry(modelID, mesh.expressID, placedGeometry);
+      let geom = itemMesh.geometry.applyMatrix4(itemMesh.matrix);
+      this.storeGeometryByMaterial(placedGeometry.color, geom);
+    }
+  }
+
+  getPlacedGeometry(modelID, expressID, placedGeometry) {
+    const geometry = this.getBufferGeometry(modelID, expressID, placedGeometry);
+    const mesh = new Mesh(geometry);
+    mesh.matrix = this.getMeshMatrix(placedGeometry.flatTransformation);
+    mesh.matrixAutoUpdate = false;
+    return mesh;
+  }
+
+  getBufferGeometry(modelID, expressID, placedGeometry) {
+    const geometry = this.state.api.GetGeometry(modelID, placedGeometry.geometryExpressID);
+    const verts = this.state.api.GetVertexArray(geometry.GetVertexData(), geometry.GetVertexDataSize());
+    const indices = this.state.api.GetIndexArray(geometry.GetIndexData(), geometry.GetIndexDataSize());
+    const buffer = this.ifcGeometryToBuffer(expressID, verts, indices);
+    geometry.delete();
+    return buffer;
+  }
+
+  storeGeometryByMaterial(color, geometry) {
+    let colID = `${color.x}${color.y}${color.z}${color.w}`;
+    if (this.geometriesByMaterials[colID]) {
+      this.geometriesByMaterials[colID].geometries.push(geometry);
+      return;
+    }
+    const col = new Color(color.x, color.y, color.z);
+    const material = new MeshLambertMaterial({
+      color: col,
+      side: DoubleSide
+    });
+    material.transparent = color.w !== 1;
+    if (material.transparent)
+      material.opacity = color.w;
+    this.geometriesByMaterials[colID] = {
+      material,
+      geometries: [geometry]
+    };
+  }
+
+  getMeshMatrix(matrix) {
+    const mat = new Matrix4();
+    mat.fromArray(matrix);
+    return mat;
+  }
+
+  ifcGeometryToBuffer(expressID, vertexData, indexData) {
+    const geometry = new BufferGeometry();
+    const posFloats = new Float32Array(vertexData.length / 2);
+    const normFloats = new Float32Array(vertexData.length / 2);
+    const idAttribute = new Uint32Array(vertexData.length / 6);
+    for (let i = 0; i < vertexData.length; i += 6) {
+      posFloats[i / 2] = vertexData[i];
+      posFloats[i / 2 + 1] = vertexData[i + 1];
+      posFloats[i / 2 + 2] = vertexData[i + 2];
+      normFloats[i / 2] = vertexData[i + 3];
+      normFloats[i / 2 + 1] = vertexData[i + 4];
+      normFloats[i / 2 + 2] = vertexData[i + 5];
+      idAttribute[i / 6] = expressID;
+    }
+    geometry.setAttribute('position', new BufferAttribute(posFloats, 3));
+    geometry.setAttribute('normal', new BufferAttribute(normFloats, 3));
+    geometry.setAttribute('expressID', new BufferAttribute(idAttribute, 1));
+    geometry.setIndex(new BufferAttribute(indexData, 1));
+    return geometry;
+  }
+
+  cleanUpGeometryMemory(geometries) {
+    geometries.forEach(geometry => geometry.dispose());
+    Object.keys(this.geometriesByMaterials).forEach((materialID) => {
+      const geometriesByMaterial = this.geometriesByMaterials[materialID];
+      geometriesByMaterial.geometries.forEach(geometry => geometry.dispose());
+      geometriesByMaterial.geometries = [];
+      geometriesByMaterial.material = null;
+    });
+    this.geometriesByMaterials = {};
+  }
+
+}
+
+class ItemsMap {
+
+  constructor(state) {
+    this.state = state;
+    this.map = {};
+  }
+
+  generateGeometryIndexMap(modelID) {
+    if (this.map[modelID])
+      return;
+    const geometry = this.getGeometry(modelID);
+    const items = this.newItemsMap(modelID, geometry);
+    for (const group of geometry.groups) {
+      this.fillItemsWithGroupInfo(group, geometry, items);
+    }
+  }
+
+  getSubsetID(modelID, material, customID = 'DEFAULT') {
+    const baseID = modelID;
+    const materialID = material ? material.uuid : 'DEFAULT';
+    return `${baseID} - ${materialID} - ${customID}`;
+  }
+
+  dispose() {
+    Object.values(this.map).forEach(model => {
+      model.indexCache = null;
+      model.map = null;
+    });
+    this.map = null;
+  }
+
+  getGeometry(modelID) {
+    const geometry = this.state.models[modelID].mesh.geometry;
+    if (!geometry)
+      throw new Error('Model without geometry.');
+    if (!geometry.index)
+      throw new Error('Geometry must be indexed');
+    return geometry;
+  }
+
+  newItemsMap(modelID, geometry) {
+    const startIndices = geometry.index.array;
+    this.map[modelID] = {
+      indexCache: startIndices.slice(0, geometry.index.array.length),
+      map: new Map()
+    };
+    return this.map[modelID];
+  }
+
+  fillItemsWithGroupInfo(group, geometry, items) {
+    let prevExpressID = -1;
+    const materialIndex = group.materialIndex;
+    const materialStart = group.start;
+    const materialEnd = materialStart + group.count - 1;
+    let objectStart = -1;
+    let objectEnd = -1;
+    for (let i = materialStart; i <= materialEnd; i++) {
+      const index = geometry.index.array[i];
+      const expressID = geometry.attributes.expressID.array[index];
+      if (prevExpressID === -1) {
+        prevExpressID = expressID;
+        objectStart = i;
+      }
+      const isEndOfMaterial = i === materialEnd;
+      if (isEndOfMaterial) {
+        const store = this.getMaterialStore(items.map, expressID, materialIndex);
+        store.push(objectStart, materialEnd);
+        break;
+      }
+      if (prevExpressID === expressID)
+        continue;
+      const store = this.getMaterialStore(items.map, prevExpressID, materialIndex);
+      objectEnd = i - 1;
+      store.push(objectStart, objectEnd);
+      prevExpressID = expressID;
+      objectStart = i;
+    }
+  }
+
+  getMaterialStore(map, id, matIndex) {
+    if (map.get(id) === undefined) {
+      map.set(id, {});
+    }
+    const storedIfcItem = map.get(id);
+    if (storedIfcItem === undefined)
+      throw new Error('Geometry map generation error');
+    if (storedIfcItem[matIndex] === undefined) {
+      storedIfcItem[matIndex] = [];
+    }
+    return storedIfcItem[matIndex];
+  }
+
+}
+
+class SubsetUtils {
+
+  static getAllIndicesOfGroup(modelID, ids, materialIndex, items, flatten = true) {
+    const indicesByGroup = [];
+    for (const expressID of ids) {
+      const entry = items.map.get(expressID);
+      if (!entry)
+        continue;
+      const value = entry[materialIndex];
+      if (!value)
+        continue;
+      SubsetUtils.getIndexChunk(value, indicesByGroup, materialIndex, items, flatten);
+    }
+    return indicesByGroup;
+  }
+
+  static getIndexChunk(value, indicesByGroup, materialIndex, items, flatten) {
+    const pairs = value.length / 2;
+    for (let pair = 0; pair < pairs; pair++) {
+      const pairIndex = pair * 2;
+      const start = value[pairIndex];
+      const end = value[pairIndex + 1];
+      for (let j = start; j <= end; j++) {
+        if (flatten)
+          indicesByGroup.push(items.indexCache[j]);
+        else {
+          if (!indicesByGroup[materialIndex])
+            indicesByGroup[materialIndex] = [];
+          indicesByGroup[materialIndex].push(items.indexCache[j]);
+        }
+      }
+    }
+  }
+
+}
+
+class SubsetCreator {
+
+  constructor(state, items, subsets, BVH) {
+    this.state = state;
+    this.items = items;
+    this.subsets = subsets;
+    this.BVH = BVH;
+    this.tempIndex = [];
+  }
+
+  createSubset(config, subsetID) {
+    if (!this.items.map[config.modelID])
+      this.items.generateGeometryIndexMap(config.modelID);
+    if (!this.subsets[subsetID])
+      this.initializeSubset(config, subsetID);
+    this.filterIndices(config, subsetID);
+    this.constructSubsetByMaterial(config, subsetID);
+    config.ids.forEach(id => this.subsets[subsetID].ids.add(id));
+    this.subsets[subsetID].mesh.geometry.setIndex(this.tempIndex);
+    this.tempIndex.length = 0;
+    const subset = this.subsets[subsetID].mesh;
+    if (config.applyBVH)
+      this.BVH.applyThreeMeshBVH(subset.geometry);
+    if (config.scene)
+      config.scene.add(subset);
+    return this.subsets[subsetID].mesh;
+  }
+
+  dispose() {
+    this.tempIndex = [];
+  }
+
+  initializeSubset(config, subsetID) {
+    const model = this.state.models[config.modelID].mesh;
+    const subsetGeom = new BufferGeometry();
+    this.initializeSubsetAttributes(subsetGeom, model);
+    if (!config.material)
+      this.initializeSubsetGroups(subsetGeom, model);
+    const mesh = new Mesh(subsetGeom, config.material || model.material);
+    mesh.modelID = config.modelID;
+    const bvh = Boolean(config.applyBVH);
+    this.subsets[subsetID] = {
+      ids: new Set(),
+      mesh,
+      bvh
+    };
+    model.add(mesh);
+  }
+
+  initializeSubsetAttributes(subsetGeom, model) {
+    subsetGeom.setAttribute('position', model.geometry.attributes.position);
+    subsetGeom.setAttribute('normal', model.geometry.attributes.normal);
+    subsetGeom.setAttribute('expressID', model.geometry.attributes.expressID);
+    subsetGeom.setIndex([]);
+  }
+
+  initializeSubsetGroups(subsetGeom, model) {
+    subsetGeom.groups = JSON.parse(JSON.stringify(model.geometry.groups));
+    this.resetGroups(subsetGeom);
+  }
+
+  filterIndices(config, subsetID) {
+    const geometry = this.subsets[subsetID].mesh.geometry;
+    if (config.removePrevious) {
+      geometry.setIndex([]);
+      this.resetGroups(geometry);
+      return;
+    }
+    const previousIndices = geometry.index.array;
+    const previousIDs = this.subsets[subsetID].ids;
+    config.ids = config.ids.filter(id => !previousIDs.has(id));
+    this.tempIndex = Array.from(previousIndices);
+  }
+
+  constructSubsetByMaterial(config, subsetID) {
+    const model = this.state.models[config.modelID].mesh;
+    const newIndices = {
+      count: 0
+    };
+    for (let i = 0; i < model.geometry.groups.length; i++) {
+      this.insertNewIndices(config, subsetID, i, newIndices);
+    }
+  }
+
+  insertNewIndices(config, subsetID, materialIndex, newIndices) {
+    const items = this.items.map[config.modelID];
+    const indicesOfOneMaterial = SubsetUtils.getAllIndicesOfGroup(config.modelID, config.ids, materialIndex, items);
+    if (!config.material) {
+      this.insertIndicesAtGroup(subsetID, indicesOfOneMaterial, materialIndex, newIndices);
+    } else {
+      indicesOfOneMaterial.forEach(index => this.tempIndex.push(index));
+    }
+  }
+
+  insertIndicesAtGroup(subsetID, indicesByGroup, index, newIndices) {
+    const currentGroup = this.getCurrentGroup(subsetID, index);
+    currentGroup.start += newIndices.count;
+    let newIndicesPosition = currentGroup.start + currentGroup.count;
+    newIndices.count += indicesByGroup.length;
+    if (indicesByGroup.length > 0) {
+      let position = newIndicesPosition;
+      const start = this.tempIndex.slice(0, position);
+      const end = this.tempIndex.slice(position);
+      this.tempIndex = Array.prototype.concat.apply([], [start, indicesByGroup, end]);
+      currentGroup.count += indicesByGroup.length;
+    }
+  }
+
+  getCurrentGroup(subsetID, groupIndex) {
+    const geometry = this.subsets[subsetID].mesh.geometry;
+    return geometry.groups[groupIndex];
+  }
+
+  resetGroups(geometry) {
+    geometry.groups.forEach((group) => {
+      group.start = 0;
+      group.count = 0;
+    });
+  }
+
+}
+
+class SubsetManager {
+
+  constructor(state, BVH) {
+    this.subsets = {};
+    this.state = state;
+    this.items = new ItemsMap(state);
+    this.BVH = BVH;
+    this.subsetCreator = new SubsetCreator(state, this.items, this.subsets, this.BVH);
+  }
+
+  getAllSubsets() {
+    return this.subsets;
+  }
+
+  getSubset(modelID, material, customId) {
+    const subsetID = this.getSubsetID(modelID, material, customId);
+    return this.subsets[subsetID].mesh;
+  }
+
+  removeSubset(modelID, material, customID) {
+    const subsetID = this.getSubsetID(modelID, material, customID);
+    const subset = this.subsets[subsetID];
+    if (!subset)
+      return;
+    if (subset.mesh.parent)
+      subset.mesh.removeFromParent();
+    subset.mesh.geometry.attributes = {};
+    subset.mesh.geometry.index = null;
+    subset.mesh.geometry.dispose();
+    subset.mesh.geometry = null;
+    delete this.subsets[subsetID];
+  }
+
+  createSubset(config) {
+    const subsetID = this.getSubsetID(config.modelID, config.material, config.customID);
+    return this.subsetCreator.createSubset(config, subsetID);
+  }
+
+  removeFromSubset(modelID, ids, customID, material) {
+    const subsetID = this.getSubsetID(modelID, material, customID);
+    if (!this.subsets[subsetID])
+      return;
+    const previousIDs = this.subsets[subsetID].ids;
+    ids.forEach((id) => {
+      if (previousIDs.has(id))
+        previousIDs.delete(id);
+    });
+    return this.createSubset({
+      modelID,
+      removePrevious: true,
+      material,
+      customID,
+      applyBVH: this.subsets[subsetID].bvh,
+      ids: Array.from(previousIDs),
+      scene: this.subsets[subsetID].mesh.parent
+    });
+  }
+
+  clearSubset(modelID, customID, material) {
+    const subsetID = this.getSubsetID(modelID, material, customID);
+    if (!this.subsets[subsetID])
+      return;
+    this.subsets[subsetID].ids.clear();
+    const subset = this.getSubset(modelID, material, customID);
+    subset.geometry.setIndex([]);
+  }
+
+  dispose() {
+    this.items.dispose();
+    this.subsetCreator.dispose();
+    Object.values(this.subsets).forEach(subset => {
+      subset.ids = null;
+      subset.mesh.removeFromParent();
+      const mats = subset.mesh.material;
+      if (Array.isArray(mats))
+        mats.forEach(mat => mat.dispose());
+      else
+        mats.dispose();
+      subset.mesh.geometry.index = null;
+      subset.mesh.geometry.dispose();
+      const geom = subset.mesh.geometry;
+      if (geom.disposeBoundsTree)
+        geom.disposeBoundsTree();
+      subset.mesh = null;
+    });
+    this.subsets = null;
+  }
+
+  getSubsetID(modelID, material, customID = 'DEFAULT') {
+    const baseID = modelID;
+    const materialID = material ? material.uuid : 'DEFAULT';
+    return `${baseID} - ${materialID} - ${customID}`;
+  }
+
+}
+
+const IdAttrName = 'expressID';
+const PropsNames = {
+  aggregates: {
+    name: IFCRELAGGREGATES,
+    relating: 'RelatingObject',
+    related: 'RelatedObjects',
+    key: 'children'
+  },
+  spatial: {
+    name: IFCRELCONTAINEDINSPATIALSTRUCTURE,
+    relating: 'RelatingStructure',
+    related: 'RelatedElements',
+    key: 'children'
+  },
+  psets: {
+    name: IFCRELDEFINESBYPROPERTIES,
+    relating: 'RelatingPropertyDefinition',
+    related: 'RelatedObjects',
+    key: 'hasPsets'
+  },
+  materials: {
+    name: IFCRELASSOCIATESMATERIAL,
+    relating: 'RelatingMaterial',
+    related: 'RelatedObjects',
+    key: 'hasMaterial'
+  },
+  type: {
+    name: IFCRELDEFINESBYTYPE,
+    relating: 'RelatingType',
+    related: 'RelatedObjects',
+    key: 'hasType'
+  }
+};
+
+class BasePropertyManager {
+
+  constructor(state) {
+    this.state = state;
+  }
+
+  async getPropertySets(modelID, elementID, recursive = false) {
+    return await this.getProperty(modelID, elementID, recursive, PropsNames.psets);
+  }
+
+  async getTypeProperties(modelID, elementID, recursive = false) {
+    return await this.getProperty(modelID, elementID, recursive, PropsNames.type);
+  }
+
+  async getMaterialsProperties(modelID, elementID, recursive = false) {
+    return await this.getProperty(modelID, elementID, recursive, PropsNames.materials);
+  }
+
+  async getSpatialNode(modelID, node, treeChunks, includeProperties) {
+    await this.getChildren(modelID, node, treeChunks, PropsNames.aggregates, includeProperties);
+    await this.getChildren(modelID, node, treeChunks, PropsNames.spatial, includeProperties);
+  }
+
+  async getChildren(modelID, node, treeChunks, propNames, includeProperties) {
+    const children = treeChunks[node.expressID];
+    if (children == undefined)
+      return;
+    const prop = propNames.key;
+    const nodes = [];
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      let node = this.newNode(modelID, child);
+      if (includeProperties) {
+        const properties = await this.getItemProperties(modelID, node.expressID);
+        node = {
+          ...properties, ...node
+        };
+      }
+      await this.getSpatialNode(modelID, node, treeChunks, includeProperties);
+      nodes.push(node);
+    }
+    node[prop] = nodes;
+  }
+
+  newNode(modelID, id) {
+    const typeName = this.getNodeType(modelID, id);
+    return {
+      expressID: id,
+      type: typeName,
+      children: []
+    };
+  }
+
+  async getSpatialTreeChunks(modelID) {
+    const treeChunks = {};
+    await this.getChunks(modelID, treeChunks, PropsNames.aggregates);
+    await this.getChunks(modelID, treeChunks, PropsNames.spatial);
+    return treeChunks;
+  }
+
+  saveChunk(chunks, propNames, rel) {
+    const relating = rel[propNames.relating].value;
+    const related = rel[propNames.related].map((r) => r.value);
+    if (chunks[relating] == undefined) {
+      chunks[relating] = related;
+    } else {
+      chunks[relating] = chunks[relating].concat(related);
+    }
+  }
+
+  getRelated(rel, propNames, IDs) {
+    const element = rel[propNames.relating];
+    if (!element) {
+      return console.warn(`The object with ID ${rel.expressID} has a broken reference.`);
+    }
+    if (!Array.isArray(element))
+      IDs.push(element.value);
+    else
+      element.forEach((ele) => IDs.push(ele.value));
+  }
+
+  static isRelated(id, rel, propNames) {
+    const relatedItems = rel[propNames.related];
+    if (Array.isArray(relatedItems)) {
+      const values = relatedItems.map((item) => item.value);
+      return values.includes(id);
+    }
+    return relatedItems.value === id;
+  }
+
+  static newIfcProject(id) {
+    return {
+      expressID: id,
+      type: 'IFCPROJECT',
+      children: []
+    };
+  }
+
+  async getProperty(modelID, elementID, recursive = false, propName) {}
+
+  async getChunks(modelID, chunks, propNames) {}
+
+  async getItemProperties(modelID, expressID, recursive = false) {}
+
+  getNodeType(modelID, id) {}
+
+}
+
+let IfcElements = {
+  103090709: 'IFCPROJECT',
+  4097777520: 'IFCSITE',
+  4031249490: 'IFCBUILDING',
+  3124254112: 'IFCBUILDINGSTOREY',
+  3856911033: 'IFCSPACE',
+  1674181508: 'IFCANNOTATION',
+  25142252: 'IFCCONTROLLER',
+  32344328: 'IFCBOILER',
+  76236018: 'IFCLAMP',
+  90941305: 'IFCPUMP',
+  177149247: 'IFCAIRTERMINALBOX',
+  182646315: 'IFCFLOWINSTRUMENT',
+  263784265: 'IFCFURNISHINGELEMENT',
+  264262732: 'IFCELECTRICGENERATOR',
+  277319702: 'IFCAUDIOVISUALAPPLIANCE',
+  310824031: 'IFCPIPEFITTING',
+  331165859: 'IFCSTAIR',
+  342316401: 'IFCDUCTFITTING',
+  377706215: 'IFCMECHANICALFASTENER',
+  395920057: 'IFCDOOR',
+  402227799: 'IFCELECTRICMOTOR',
+  413509423: 'IFCSYSTEMFURNITUREELEMENT',
+  484807127: 'IFCEVAPORATOR',
+  486154966: 'IFCWINDOWSTANDARDCASE',
+  629592764: 'IFCLIGHTFIXTURE',
+  630975310: 'IFCUNITARYCONTROLELEMENT',
+  635142910: 'IFCCABLECARRIERFITTING',
+  639361253: 'IFCCOIL',
+  647756555: 'IFCFASTENER',
+  707683696: 'IFCFLOWSTORAGEDEVICE',
+  738039164: 'IFCPROTECTIVEDEVICE',
+  753842376: 'IFCBEAM',
+  812556717: 'IFCTANK',
+  819412036: 'IFCFILTER',
+  843113511: 'IFCCOLUMN',
+  862014818: 'IFCELECTRICDISTRIBUTIONBOARD',
+  900683007: 'IFCFOOTING',
+  905975707: 'IFCCOLUMNSTANDARDCASE',
+  926996030: 'IFCVOIDINGFEATURE',
+  979691226: 'IFCREINFORCINGBAR',
+  987401354: 'IFCFLOWSEGMENT',
+  1003880860: 'IFCELECTRICTIMECONTROL',
+  1051757585: 'IFCCABLEFITTING',
+  1052013943: 'IFCDISTRIBUTIONCHAMBERELEMENT',
+  1062813311: 'IFCDISTRIBUTIONCONTROLELEMENT',
+  1073191201: 'IFCMEMBER',
+  1095909175: 'IFCBUILDINGELEMENTPROXY',
+  1156407060: 'IFCPLATESTANDARDCASE',
+  1162798199: 'IFCSWITCHINGDEVICE',
+  1329646415: 'IFCSHADINGDEVICE',
+  1335981549: 'IFCDISCRETEACCESSORY',
+  1360408905: 'IFCDUCTSILENCER',
+  1404847402: 'IFCSTACKTERMINAL',
+  1426591983: 'IFCFIRESUPPRESSIONTERMINAL',
+  1437502449: 'IFCMEDICALDEVICE',
+  1509553395: 'IFCFURNITURE',
+  1529196076: 'IFCSLAB',
+  1620046519: 'IFCTRANSPORTELEMENT',
+  1634111441: 'IFCAIRTERMINAL',
+  1658829314: 'IFCENERGYCONVERSIONDEVICE',
+  1677625105: 'IFCCIVILELEMENT',
+  1687234759: 'IFCPILE',
+  1904799276: 'IFCELECTRICAPPLIANCE',
+  1911478936: 'IFCMEMBERSTANDARDCASE',
+  1945004755: 'IFCDISTRIBUTIONELEMENT',
+  1973544240: 'IFCCOVERING',
+  1999602285: 'IFCSPACEHEATER',
+  2016517767: 'IFCROOF',
+  2056796094: 'IFCAIRTOAIRHEATRECOVERY',
+  2058353004: 'IFCFLOWCONTROLLER',
+  2068733104: 'IFCHUMIDIFIER',
+  2176052936: 'IFCJUNCTIONBOX',
+  2188021234: 'IFCFLOWMETER',
+  2223149337: 'IFCFLOWTERMINAL',
+  2262370178: 'IFCRAILING',
+  2272882330: 'IFCCONDENSER',
+  2295281155: 'IFCPROTECTIVEDEVICETRIPPINGUNIT',
+  2320036040: 'IFCREINFORCINGMESH',
+  2347447852: 'IFCTENDONANCHOR',
+  2391383451: 'IFCVIBRATIONISOLATOR',
+  2391406946: 'IFCWALL',
+  2474470126: 'IFCMOTORCONNECTION',
+  2769231204: 'IFCVIRTUALELEMENT',
+  2814081492: 'IFCENGINE',
+  2906023776: 'IFCBEAMSTANDARDCASE',
+  2938176219: 'IFCBURNER',
+  2979338954: 'IFCBUILDINGELEMENTPART',
+  3024970846: 'IFCRAMP',
+  3026737570: 'IFCTUBEBUNDLE',
+  3027962421: 'IFCSLABSTANDARDCASE',
+  3040386961: 'IFCDISTRIBUTIONFLOWELEMENT',
+  3053780830: 'IFCSANITARYTERMINAL',
+  3079942009: 'IFCOPENINGSTANDARDCASE',
+  3087945054: 'IFCALARM',
+  3101698114: 'IFCSURFACEFEATURE',
+  3127900445: 'IFCSLABELEMENTEDCASE',
+  3132237377: 'IFCFLOWMOVINGDEVICE',
+  3171933400: 'IFCPLATE',
+  3221913625: 'IFCCOMMUNICATIONSAPPLIANCE',
+  3242481149: 'IFCDOORSTANDARDCASE',
+  3283111854: 'IFCRAMPFLIGHT',
+  3296154744: 'IFCCHIMNEY',
+  3304561284: 'IFCWINDOW',
+  3310460725: 'IFCELECTRICFLOWSTORAGEDEVICE',
+  3319311131: 'IFCHEATEXCHANGER',
+  3415622556: 'IFCFAN',
+  3420628829: 'IFCSOLARDEVICE',
+  3493046030: 'IFCGEOGRAPHICELEMENT',
+  3495092785: 'IFCCURTAINWALL',
+  3508470533: 'IFCFLOWTREATMENTDEVICE',
+  3512223829: 'IFCWALLSTANDARDCASE',
+  3518393246: 'IFCDUCTSEGMENT',
+  3571504051: 'IFCCOMPRESSOR',
+  3588315303: 'IFCOPENINGELEMENT',
+  3612865200: 'IFCPIPESEGMENT',
+  3640358203: 'IFCCOOLINGTOWER',
+  3651124850: 'IFCPROJECTIONELEMENT',
+  3694346114: 'IFCOUTLET',
+  3747195512: 'IFCEVAPORATIVECOOLER',
+  3758799889: 'IFCCABLECARRIERSEGMENT',
+  3824725483: 'IFCTENDON',
+  3825984169: 'IFCTRANSFORMER',
+  3902619387: 'IFCCHILLER',
+  4074379575: 'IFCDAMPER',
+  4086658281: 'IFCSENSOR',
+  4123344466: 'IFCELEMENTASSEMBLY',
+  4136498852: 'IFCCOOLEDBEAM',
+  4156078855: 'IFCWALLELEMENTEDCASE',
+  4175244083: 'IFCINTERCEPTOR',
+  4207607924: 'IFCVALVE',
+  4217484030: 'IFCCABLESEGMENT',
+  4237592921: 'IFCWASTETERMINAL',
+  4252922144: 'IFCSTAIRFLIGHT',
+  4278956645: 'IFCFLOWFITTING',
+  4288193352: 'IFCACTUATOR',
+  4292641817: 'IFCUNITARYEQUIPMENT',
+  3009204131: 'IFCGRID'
+};
+
+class WebIfcPropertyManager extends BasePropertyManager {
+
+  async getItemProperties(modelID, id, recursive = false) {
+    return this.state.api.GetLine(modelID, id, recursive);
+  }
+
+  async getSpatialStructure(modelID, includeProperties) {
+    const chunks = await this.getSpatialTreeChunks(modelID);
+    const allLines = await this.state.api.GetLineIDsWithType(modelID, IFCPROJECT);
+    const projectID = allLines.get(0);
+    const project = WebIfcPropertyManager.newIfcProject(projectID);
+    await this.getSpatialNode(modelID, project, chunks, includeProperties);
+    return project;
+  }
+
+  async getAllItemsOfType(modelID, type, verbose) {
+    let items = [];
+    const lines = await this.state.api.GetLineIDsWithType(modelID, type);
+    for (let i = 0; i < lines.size(); i++)
+      items.push(lines.get(i));
+    if (!verbose)
+      return items;
+    const result = [];
+    for (let i = 0; i < items.length; i++) {
+      result.push(await this.state.api.GetLine(modelID, items[i]));
+    }
+    return result;
+  }
+
+  async getProperty(modelID, elementID, recursive = false, propName) {
+    const propSetIds = await this.getAllRelatedItemsOfType(modelID, elementID, propName);
+    const result = [];
+    for (let i = 0; i < propSetIds.length; i++) {
+      result.push(await this.state.api.GetLine(modelID, propSetIds[i], recursive));
+    }
+    return result;
+  }
+
+  getNodeType(modelID, id) {
+    const typeID = this.state.models[modelID].types[id];
+    return IfcElements[typeID];
+  }
+
+  async getChunks(modelID, chunks, propNames) {
+    const relation = await this.state.api.GetLineIDsWithType(modelID, propNames.name);
+    for (let i = 0; i < relation.size(); i++) {
+      const rel = await this.state.api.GetLine(modelID, relation.get(i), false);
+      this.saveChunk(chunks, propNames, rel);
+    }
+  }
+
+  async getAllRelatedItemsOfType(modelID, id, propNames) {
+    const lines = await this.state.api.GetLineIDsWithType(modelID, propNames.name);
+    const IDs = [];
+    for (let i = 0; i < lines.size(); i++) {
+      const rel = await this.state.api.GetLine(modelID, lines.get(i));
+      const isRelated = BasePropertyManager.isRelated(id, rel, propNames);
+      if (isRelated)
+        this.getRelated(rel, propNames, IDs);
+    }
+    return IDs;
+  }
+
+}
+
+let IfcTypesMap = {
+  3821786052: "IFCACTIONREQUEST",
+  2296667514: "IFCACTOR",
+  3630933823: "IFCACTORROLE",
+  4288193352: "IFCACTUATOR",
+  2874132201: "IFCACTUATORTYPE",
+  618182010: "IFCADDRESS",
+  1635779807: "IFCADVANCEDBREP",
+  2603310189: "IFCADVANCEDBREPWITHVOIDS",
+  3406155212: "IFCADVANCEDFACE",
+  1634111441: "IFCAIRTERMINAL",
+  177149247: "IFCAIRTERMINALBOX",
+  1411407467: "IFCAIRTERMINALBOXTYPE",
+  3352864051: "IFCAIRTERMINALTYPE",
+  2056796094: "IFCAIRTOAIRHEATRECOVERY",
+  1871374353: "IFCAIRTOAIRHEATRECOVERYTYPE",
+  3087945054: "IFCALARM",
+  3001207471: "IFCALARMTYPE",
+  325726236: "IFCALIGNMENT",
+  749761778: "IFCALIGNMENT2DHORIZONTAL",
+  3199563722: "IFCALIGNMENT2DHORIZONTALSEGMENT",
+  2483840362: "IFCALIGNMENT2DSEGMENT",
+  3379348081: "IFCALIGNMENT2DVERSEGCIRCULARARC",
+  3239324667: "IFCALIGNMENT2DVERSEGLINE",
+  4263986512: "IFCALIGNMENT2DVERSEGPARABOLICARC",
+  53199957: "IFCALIGNMENT2DVERTICAL",
+  2029264950: "IFCALIGNMENT2DVERTICALSEGMENT",
+  3512275521: "IFCALIGNMENTCURVE",
+  1674181508: "IFCANNOTATION",
+  669184980: "IFCANNOTATIONFILLAREA",
+  639542469: "IFCAPPLICATION",
+  411424972: "IFCAPPLIEDVALUE",
+  130549933: "IFCAPPROVAL",
+  3869604511: "IFCAPPROVALRELATIONSHIP",
+  3798115385: "IFCARBITRARYCLOSEDPROFILEDEF",
+  1310608509: "IFCARBITRARYOPENPROFILEDEF",
+  2705031697: "IFCARBITRARYPROFILEDEFWITHVOIDS",
+  3460190687: "IFCASSET",
+  3207858831: "IFCASYMMETRICISHAPEPROFILEDEF",
+  277319702: "IFCAUDIOVISUALAPPLIANCE",
+  1532957894: "IFCAUDIOVISUALAPPLIANCETYPE",
+  4261334040: "IFCAXIS1PLACEMENT",
+  3125803723: "IFCAXIS2PLACEMENT2D",
+  2740243338: "IFCAXIS2PLACEMENT3D",
+  1967976161: "IFCBSPLINECURVE",
+  2461110595: "IFCBSPLINECURVEWITHKNOTS",
+  2887950389: "IFCBSPLINESURFACE",
+  167062518: "IFCBSPLINESURFACEWITHKNOTS",
+  753842376: "IFCBEAM",
+  2906023776: "IFCBEAMSTANDARDCASE",
+  819618141: "IFCBEAMTYPE",
+  4196446775: "IFCBEARING",
+  3649138523: "IFCBEARINGTYPE",
+  616511568: "IFCBLOBTEXTURE",
+  1334484129: "IFCBLOCK",
+  32344328: "IFCBOILER",
+  231477066: "IFCBOILERTYPE",
+  3649129432: "IFCBOOLEANCLIPPINGRESULT",
+  2736907675: "IFCBOOLEANRESULT",
+  4037036970: "IFCBOUNDARYCONDITION",
+  1136057603: "IFCBOUNDARYCURVE",
+  1560379544: "IFCBOUNDARYEDGECONDITION",
+  3367102660: "IFCBOUNDARYFACECONDITION",
+  1387855156: "IFCBOUNDARYNODECONDITION",
+  2069777674: "IFCBOUNDARYNODECONDITIONWARPING",
+  1260505505: "IFCBOUNDEDCURVE",
+  4182860854: "IFCBOUNDEDSURFACE",
+  2581212453: "IFCBOUNDINGBOX",
+  2713105998: "IFCBOXEDHALFSPACE",
+  644574406: "IFCBRIDGE",
+  963979645: "IFCBRIDGEPART",
+  4031249490: "IFCBUILDING",
+  3299480353: "IFCBUILDINGELEMENT",
+  2979338954: "IFCBUILDINGELEMENTPART",
+  39481116: "IFCBUILDINGELEMENTPARTTYPE",
+  1095909175: "IFCBUILDINGELEMENTPROXY",
+  1909888760: "IFCBUILDINGELEMENTPROXYTYPE",
+  1950629157: "IFCBUILDINGELEMENTTYPE",
+  3124254112: "IFCBUILDINGSTOREY",
+  1177604601: "IFCBUILDINGSYSTEM",
+  2938176219: "IFCBURNER",
+  2188180465: "IFCBURNERTYPE",
+  2898889636: "IFCCSHAPEPROFILEDEF",
+  635142910: "IFCCABLECARRIERFITTING",
+  395041908: "IFCCABLECARRIERFITTINGTYPE",
+  3758799889: "IFCCABLECARRIERSEGMENT",
+  3293546465: "IFCCABLECARRIERSEGMENTTYPE",
+  1051757585: "IFCCABLEFITTING",
+  2674252688: "IFCCABLEFITTINGTYPE",
+  4217484030: "IFCCABLESEGMENT",
+  1285652485: "IFCCABLESEGMENTTYPE",
+  3999819293: "IFCCAISSONFOUNDATION",
+  3203706013: "IFCCAISSONFOUNDATIONTYPE",
+  1123145078: "IFCCARTESIANPOINT",
+  574549367: "IFCCARTESIANPOINTLIST",
+  1675464909: "IFCCARTESIANPOINTLIST2D",
+  2059837836: "IFCCARTESIANPOINTLIST3D",
+  59481748: "IFCCARTESIANTRANSFORMATIONOPERATOR",
+  3749851601: "IFCCARTESIANTRANSFORMATIONOPERATOR2D",
+  3486308946: "IFCCARTESIANTRANSFORMATIONOPERATOR2DNONUNIFORM",
+  3331915920: "IFCCARTESIANTRANSFORMATIONOPERATOR3D",
+  1416205885: "IFCCARTESIANTRANSFORMATIONOPERATOR3DNONUNIFORM",
+  3150382593: "IFCCENTERLINEPROFILEDEF",
+  3902619387: "IFCCHILLER",
+  2951183804: "IFCCHILLERTYPE",
+  3296154744: "IFCCHIMNEY",
+  2197970202: "IFCCHIMNEYTYPE",
+  2611217952: "IFCCIRCLE",
+  2937912522: "IFCCIRCLEHOLLOWPROFILEDEF",
+  1383045692: "IFCCIRCLEPROFILEDEF",
+  1062206242: "IFCCIRCULARARCSEGMENT2D",
+  1677625105: "IFCCIVILELEMENT",
+  3893394355: "IFCCIVILELEMENTTYPE",
+  747523909: "IFCCLASSIFICATION",
+  647927063: "IFCCLASSIFICATIONREFERENCE",
+  2205249479: "IFCCLOSEDSHELL",
+  639361253: "IFCCOIL",
+  2301859152: "IFCCOILTYPE",
+  776857604: "IFCCOLOURRGB",
+  3285139300: "IFCCOLOURRGBLIST",
+  3264961684: "IFCCOLOURSPECIFICATION",
+  843113511: "IFCCOLUMN",
+  905975707: "IFCCOLUMNSTANDARDCASE",
+  300633059: "IFCCOLUMNTYPE",
+  3221913625: "IFCCOMMUNICATIONSAPPLIANCE",
+  400855858: "IFCCOMMUNICATIONSAPPLIANCETYPE",
+  2542286263: "IFCCOMPLEXPROPERTY",
+  3875453745: "IFCCOMPLEXPROPERTYTEMPLATE",
+  3732776249: "IFCCOMPOSITECURVE",
+  15328376: "IFCCOMPOSITECURVEONSURFACE",
+  2485617015: "IFCCOMPOSITECURVESEGMENT",
+  1485152156: "IFCCOMPOSITEPROFILEDEF",
+  3571504051: "IFCCOMPRESSOR",
+  3850581409: "IFCCOMPRESSORTYPE",
+  2272882330: "IFCCONDENSER",
+  2816379211: "IFCCONDENSERTYPE",
+  2510884976: "IFCCONIC",
+  370225590: "IFCCONNECTEDFACESET",
+  1981873012: "IFCCONNECTIONCURVEGEOMETRY",
+  2859738748: "IFCCONNECTIONGEOMETRY",
+  45288368: "IFCCONNECTIONPOINTECCENTRICITY",
+  2614616156: "IFCCONNECTIONPOINTGEOMETRY",
+  2732653382: "IFCCONNECTIONSURFACEGEOMETRY",
+  775493141: "IFCCONNECTIONVOLUMEGEOMETRY",
+  1959218052: "IFCCONSTRAINT",
+  3898045240: "IFCCONSTRUCTIONEQUIPMENTRESOURCE",
+  2185764099: "IFCCONSTRUCTIONEQUIPMENTRESOURCETYPE",
+  1060000209: "IFCCONSTRUCTIONMATERIALRESOURCE",
+  4105962743: "IFCCONSTRUCTIONMATERIALRESOURCETYPE",
+  488727124: "IFCCONSTRUCTIONPRODUCTRESOURCE",
+  1525564444: "IFCCONSTRUCTIONPRODUCTRESOURCETYPE",
+  2559216714: "IFCCONSTRUCTIONRESOURCE",
+  2574617495: "IFCCONSTRUCTIONRESOURCETYPE",
+  3419103109: "IFCCONTEXT",
+  3050246964: "IFCCONTEXTDEPENDENTUNIT",
+  3293443760: "IFCCONTROL",
+  25142252: "IFCCONTROLLER",
+  578613899: "IFCCONTROLLERTYPE",
+  2889183280: "IFCCONVERSIONBASEDUNIT",
+  2713554722: "IFCCONVERSIONBASEDUNITWITHOFFSET",
+  4136498852: "IFCCOOLEDBEAM",
+  335055490: "IFCCOOLEDBEAMTYPE",
+  3640358203: "IFCCOOLINGTOWER",
+  2954562838: "IFCCOOLINGTOWERTYPE",
+  1785450214: "IFCCOORDINATEOPERATION",
+  1466758467: "IFCCOORDINATEREFERENCESYSTEM",
+  3895139033: "IFCCOSTITEM",
+  1419761937: "IFCCOSTSCHEDULE",
+  602808272: "IFCCOSTVALUE",
+  1973544240: "IFCCOVERING",
+  1916426348: "IFCCOVERINGTYPE",
+  3295246426: "IFCCREWRESOURCE",
+  1815067380: "IFCCREWRESOURCETYPE",
+  2506170314: "IFCCSGPRIMITIVE3D",
+  2147822146: "IFCCSGSOLID",
+  539742890: "IFCCURRENCYRELATIONSHIP",
+  3495092785: "IFCCURTAINWALL",
+  1457835157: "IFCCURTAINWALLTYPE",
+  2601014836: "IFCCURVE",
+  2827736869: "IFCCURVEBOUNDEDPLANE",
+  2629017746: "IFCCURVEBOUNDEDSURFACE",
+  1186437898: "IFCCURVESEGMENT2D",
+  3800577675: "IFCCURVESTYLE",
+  1105321065: "IFCCURVESTYLEFONT",
+  2367409068: "IFCCURVESTYLEFONTANDSCALING",
+  3510044353: "IFCCURVESTYLEFONTPATTERN",
+  1213902940: "IFCCYLINDRICALSURFACE",
+  4074379575: "IFCDAMPER",
+  3961806047: "IFCDAMPERTYPE",
+  3426335179: "IFCDEEPFOUNDATION",
+  1306400036: "IFCDEEPFOUNDATIONTYPE",
+  3632507154: "IFCDERIVEDPROFILEDEF",
+  1765591967: "IFCDERIVEDUNIT",
+  1045800335: "IFCDERIVEDUNITELEMENT",
+  2949456006: "IFCDIMENSIONALEXPONENTS",
+  32440307: "IFCDIRECTION",
+  1335981549: "IFCDISCRETEACCESSORY",
+  2635815018: "IFCDISCRETEACCESSORYTYPE",
+  1945343521: "IFCDISTANCEEXPRESSION",
+  1052013943: "IFCDISTRIBUTIONCHAMBERELEMENT",
+  1599208980: "IFCDISTRIBUTIONCHAMBERELEMENTTYPE",
+  562808652: "IFCDISTRIBUTIONCIRCUIT",
+  1062813311: "IFCDISTRIBUTIONCONTROLELEMENT",
+  2063403501: "IFCDISTRIBUTIONCONTROLELEMENTTYPE",
+  1945004755: "IFCDISTRIBUTIONELEMENT",
+  3256556792: "IFCDISTRIBUTIONELEMENTTYPE",
+  3040386961: "IFCDISTRIBUTIONFLOWELEMENT",
+  3849074793: "IFCDISTRIBUTIONFLOWELEMENTTYPE",
+  3041715199: "IFCDISTRIBUTIONPORT",
+  3205830791: "IFCDISTRIBUTIONSYSTEM",
+  1154170062: "IFCDOCUMENTINFORMATION",
+  770865208: "IFCDOCUMENTINFORMATIONRELATIONSHIP",
+  3732053477: "IFCDOCUMENTREFERENCE",
+  395920057: "IFCDOOR",
+  2963535650: "IFCDOORLININGPROPERTIES",
+  1714330368: "IFCDOORPANELPROPERTIES",
+  3242481149: "IFCDOORSTANDARDCASE",
+  526551008: "IFCDOORSTYLE",
+  2323601079: "IFCDOORTYPE",
+  445594917: "IFCDRAUGHTINGPREDEFINEDCOLOUR",
+  4006246654: "IFCDRAUGHTINGPREDEFINEDCURVEFONT",
+  342316401: "IFCDUCTFITTING",
+  869906466: "IFCDUCTFITTINGTYPE",
+  3518393246: "IFCDUCTSEGMENT",
+  3760055223: "IFCDUCTSEGMENTTYPE",
+  1360408905: "IFCDUCTSILENCER",
+  2030761528: "IFCDUCTSILENCERTYPE",
+  3900360178: "IFCEDGE",
+  476780140: "IFCEDGECURVE",
+  1472233963: "IFCEDGELOOP",
+  1904799276: "IFCELECTRICAPPLIANCE",
+  663422040: "IFCELECTRICAPPLIANCETYPE",
+  862014818: "IFCELECTRICDISTRIBUTIONBOARD",
+  2417008758: "IFCELECTRICDISTRIBUTIONBOARDTYPE",
+  3310460725: "IFCELECTRICFLOWSTORAGEDEVICE",
+  3277789161: "IFCELECTRICFLOWSTORAGEDEVICETYPE",
+  264262732: "IFCELECTRICGENERATOR",
+  1534661035: "IFCELECTRICGENERATORTYPE",
+  402227799: "IFCELECTRICMOTOR",
+  1217240411: "IFCELECTRICMOTORTYPE",
+  1003880860: "IFCELECTRICTIMECONTROL",
+  712377611: "IFCELECTRICTIMECONTROLTYPE",
+  1758889154: "IFCELEMENT",
+  4123344466: "IFCELEMENTASSEMBLY",
+  2397081782: "IFCELEMENTASSEMBLYTYPE",
+  1623761950: "IFCELEMENTCOMPONENT",
+  2590856083: "IFCELEMENTCOMPONENTTYPE",
+  1883228015: "IFCELEMENTQUANTITY",
+  339256511: "IFCELEMENTTYPE",
+  2777663545: "IFCELEMENTARYSURFACE",
+  1704287377: "IFCELLIPSE",
+  2835456948: "IFCELLIPSEPROFILEDEF",
+  1658829314: "IFCENERGYCONVERSIONDEVICE",
+  2107101300: "IFCENERGYCONVERSIONDEVICETYPE",
+  2814081492: "IFCENGINE",
+  132023988: "IFCENGINETYPE",
+  3747195512: "IFCEVAPORATIVECOOLER",
+  3174744832: "IFCEVAPORATIVECOOLERTYPE",
+  484807127: "IFCEVAPORATOR",
+  3390157468: "IFCEVAPORATORTYPE",
+  4148101412: "IFCEVENT",
+  211053100: "IFCEVENTTIME",
+  4024345920: "IFCEVENTTYPE",
+  297599258: "IFCEXTENDEDPROPERTIES",
+  4294318154: "IFCEXTERNALINFORMATION",
+  3200245327: "IFCEXTERNALREFERENCE",
+  1437805879: "IFCEXTERNALREFERENCERELATIONSHIP",
+  1209101575: "IFCEXTERNALSPATIALELEMENT",
+  2853485674: "IFCEXTERNALSPATIALSTRUCTUREELEMENT",
+  2242383968: "IFCEXTERNALLYDEFINEDHATCHSTYLE",
+  1040185647: "IFCEXTERNALLYDEFINEDSURFACESTYLE",
+  3548104201: "IFCEXTERNALLYDEFINEDTEXTFONT",
+  477187591: "IFCEXTRUDEDAREASOLID",
+  2804161546: "IFCEXTRUDEDAREASOLIDTAPERED",
+  2556980723: "IFCFACE",
+  2047409740: "IFCFACEBASEDSURFACEMODEL",
+  1809719519: "IFCFACEBOUND",
+  803316827: "IFCFACEOUTERBOUND",
+  3008276851: "IFCFACESURFACE",
+  807026263: "IFCFACETEDBREP",
+  3737207727: "IFCFACETEDBREPWITHVOIDS",
+  24185140: "IFCFACILITY",
+  1310830890: "IFCFACILITYPART",
+  4219587988: "IFCFAILURECONNECTIONCONDITION",
+  3415622556: "IFCFAN",
+  346874300: "IFCFANTYPE",
+  647756555: "IFCFASTENER",
+  2489546625: "IFCFASTENERTYPE",
+  2827207264: "IFCFEATUREELEMENT",
+  2143335405: "IFCFEATUREELEMENTADDITION",
+  1287392070: "IFCFEATUREELEMENTSUBTRACTION",
+  738692330: "IFCFILLAREASTYLE",
+  374418227: "IFCFILLAREASTYLEHATCHING",
+  315944413: "IFCFILLAREASTYLETILES",
+  819412036: "IFCFILTER",
+  1810631287: "IFCFILTERTYPE",
+  1426591983: "IFCFIRESUPPRESSIONTERMINAL",
+  4222183408: "IFCFIRESUPPRESSIONTERMINALTYPE",
+  2652556860: "IFCFIXEDREFERENCESWEPTAREASOLID",
+  2058353004: "IFCFLOWCONTROLLER",
+  3907093117: "IFCFLOWCONTROLLERTYPE",
+  4278956645: "IFCFLOWFITTING",
+  3198132628: "IFCFLOWFITTINGTYPE",
+  182646315: "IFCFLOWINSTRUMENT",
+  4037862832: "IFCFLOWINSTRUMENTTYPE",
+  2188021234: "IFCFLOWMETER",
+  3815607619: "IFCFLOWMETERTYPE",
+  3132237377: "IFCFLOWMOVINGDEVICE",
+  1482959167: "IFCFLOWMOVINGDEVICETYPE",
+  987401354: "IFCFLOWSEGMENT",
+  1834744321: "IFCFLOWSEGMENTTYPE",
+  707683696: "IFCFLOWSTORAGEDEVICE",
+  1339347760: "IFCFLOWSTORAGEDEVICETYPE",
+  2223149337: "IFCFLOWTERMINAL",
+  2297155007: "IFCFLOWTERMINALTYPE",
+  3508470533: "IFCFLOWTREATMENTDEVICE",
+  3009222698: "IFCFLOWTREATMENTDEVICETYPE",
+  900683007: "IFCFOOTING",
+  1893162501: "IFCFOOTINGTYPE",
+  263784265: "IFCFURNISHINGELEMENT",
+  4238390223: "IFCFURNISHINGELEMENTTYPE",
+  1509553395: "IFCFURNITURE",
+  1268542332: "IFCFURNITURETYPE",
+  3493046030: "IFCGEOGRAPHICELEMENT",
+  4095422895: "IFCGEOGRAPHICELEMENTTYPE",
+  987898635: "IFCGEOMETRICCURVESET",
+  3448662350: "IFCGEOMETRICREPRESENTATIONCONTEXT",
+  2453401579: "IFCGEOMETRICREPRESENTATIONITEM",
+  4142052618: "IFCGEOMETRICREPRESENTATIONSUBCONTEXT",
+  3590301190: "IFCGEOMETRICSET",
+  3009204131: "IFCGRID",
+  852622518: "IFCGRIDAXIS",
+  178086475: "IFCGRIDPLACEMENT",
+  2706460486: "IFCGROUP",
+  812098782: "IFCHALFSPACESOLID",
+  3319311131: "IFCHEATEXCHANGER",
+  1251058090: "IFCHEATEXCHANGERTYPE",
+  2068733104: "IFCHUMIDIFIER",
+  1806887404: "IFCHUMIDIFIERTYPE",
+  1484403080: "IFCISHAPEPROFILEDEF",
+  3905492369: "IFCIMAGETEXTURE",
+  3570813810: "IFCINDEXEDCOLOURMAP",
+  2571569899: "IFCINDEXEDPOLYCURVE",
+  178912537: "IFCINDEXEDPOLYGONALFACE",
+  2294589976: "IFCINDEXEDPOLYGONALFACEWITHVOIDS",
+  1437953363: "IFCINDEXEDTEXTUREMAP",
+  2133299955: "IFCINDEXEDTRIANGLETEXTUREMAP",
+  4175244083: "IFCINTERCEPTOR",
+  3946677679: "IFCINTERCEPTORTYPE",
+  3113134337: "IFCINTERSECTIONCURVE",
+  2391368822: "IFCINVENTORY",
+  3741457305: "IFCIRREGULARTIMESERIES",
+  3020489413: "IFCIRREGULARTIMESERIESVALUE",
+  2176052936: "IFCJUNCTIONBOX",
+  4288270099: "IFCJUNCTIONBOXTYPE",
+  572779678: "IFCLSHAPEPROFILEDEF",
+  3827777499: "IFCLABORRESOURCE",
+  428585644: "IFCLABORRESOURCETYPE",
+  1585845231: "IFCLAGTIME",
+  76236018: "IFCLAMP",
+  1051575348: "IFCLAMPTYPE",
+  2655187982: "IFCLIBRARYINFORMATION",
+  3452421091: "IFCLIBRARYREFERENCE",
+  4162380809: "IFCLIGHTDISTRIBUTIONDATA",
+  629592764: "IFCLIGHTFIXTURE",
+  1161773419: "IFCLIGHTFIXTURETYPE",
+  1566485204: "IFCLIGHTINTENSITYDISTRIBUTION",
+  1402838566: "IFCLIGHTSOURCE",
+  125510826: "IFCLIGHTSOURCEAMBIENT",
+  2604431987: "IFCLIGHTSOURCEDIRECTIONAL",
+  4266656042: "IFCLIGHTSOURCEGONIOMETRIC",
+  1520743889: "IFCLIGHTSOURCEPOSITIONAL",
+  3422422726: "IFCLIGHTSOURCESPOT",
+  1281925730: "IFCLINE",
+  3092502836: "IFCLINESEGMENT2D",
+  388784114: "IFCLINEARPLACEMENT",
+  1154579445: "IFCLINEARPOSITIONINGELEMENT",
+  2624227202: "IFCLOCALPLACEMENT",
+  1008929658: "IFCLOOP",
+  1425443689: "IFCMANIFOLDSOLIDBREP",
+  3057273783: "IFCMAPCONVERSION",
+  2347385850: "IFCMAPPEDITEM",
+  1838606355: "IFCMATERIAL",
+  1847130766: "IFCMATERIALCLASSIFICATIONRELATIONSHIP",
+  3708119000: "IFCMATERIALCONSTITUENT",
+  2852063980: "IFCMATERIALCONSTITUENTSET",
+  760658860: "IFCMATERIALDEFINITION",
+  2022407955: "IFCMATERIALDEFINITIONREPRESENTATION",
+  248100487: "IFCMATERIALLAYER",
+  3303938423: "IFCMATERIALLAYERSET",
+  1303795690: "IFCMATERIALLAYERSETUSAGE",
+  1847252529: "IFCMATERIALLAYERWITHOFFSETS",
+  2199411900: "IFCMATERIALLIST",
+  2235152071: "IFCMATERIALPROFILE",
+  164193824: "IFCMATERIALPROFILESET",
+  3079605661: "IFCMATERIALPROFILESETUSAGE",
+  3404854881: "IFCMATERIALPROFILESETUSAGETAPERING",
+  552965576: "IFCMATERIALPROFILEWITHOFFSETS",
+  3265635763: "IFCMATERIALPROPERTIES",
+  853536259: "IFCMATERIALRELATIONSHIP",
+  1507914824: "IFCMATERIALUSAGEDEFINITION",
+  2597039031: "IFCMEASUREWITHUNIT",
+  377706215: "IFCMECHANICALFASTENER",
+  2108223431: "IFCMECHANICALFASTENERTYPE",
+  1437502449: "IFCMEDICALDEVICE",
+  1114901282: "IFCMEDICALDEVICETYPE",
+  1073191201: "IFCMEMBER",
+  1911478936: "IFCMEMBERSTANDARDCASE",
+  3181161470: "IFCMEMBERTYPE",
+  3368373690: "IFCMETRIC",
+  2998442950: "IFCMIRROREDPROFILEDEF",
+  2706619895: "IFCMONETARYUNIT",
+  2474470126: "IFCMOTORCONNECTION",
+  977012517: "IFCMOTORCONNECTIONTYPE",
+  1918398963: "IFCNAMEDUNIT",
+  3888040117: "IFCOBJECT",
+  219451334: "IFCOBJECTDEFINITION",
+  3701648758: "IFCOBJECTPLACEMENT",
+  2251480897: "IFCOBJECTIVE",
+  4143007308: "IFCOCCUPANT",
+  590820931: "IFCOFFSETCURVE",
+  3388369263: "IFCOFFSETCURVE2D",
+  3505215534: "IFCOFFSETCURVE3D",
+  2485787929: "IFCOFFSETCURVEBYDISTANCES",
+  2665983363: "IFCOPENSHELL",
+  3588315303: "IFCOPENINGELEMENT",
+  3079942009: "IFCOPENINGSTANDARDCASE",
+  4251960020: "IFCORGANIZATION",
+  1411181986: "IFCORGANIZATIONRELATIONSHIP",
+  643959842: "IFCORIENTATIONEXPRESSION",
+  1029017970: "IFCORIENTEDEDGE",
+  144952367: "IFCOUTERBOUNDARYCURVE",
+  3694346114: "IFCOUTLET",
+  2837617999: "IFCOUTLETTYPE",
+  1207048766: "IFCOWNERHISTORY",
+  2529465313: "IFCPARAMETERIZEDPROFILEDEF",
+  2519244187: "IFCPATH",
+  1682466193: "IFCPCURVE",
+  2382730787: "IFCPERFORMANCEHISTORY",
+  3566463478: "IFCPERMEABLECOVERINGPROPERTIES",
+  3327091369: "IFCPERMIT",
+  2077209135: "IFCPERSON",
+  101040310: "IFCPERSONANDORGANIZATION",
+  3021840470: "IFCPHYSICALCOMPLEXQUANTITY",
+  2483315170: "IFCPHYSICALQUANTITY",
+  2226359599: "IFCPHYSICALSIMPLEQUANTITY",
+  1687234759: "IFCPILE",
+  1158309216: "IFCPILETYPE",
+  310824031: "IFCPIPEFITTING",
+  804291784: "IFCPIPEFITTINGTYPE",
+  3612865200: "IFCPIPESEGMENT",
+  4231323485: "IFCPIPESEGMENTTYPE",
+  597895409: "IFCPIXELTEXTURE",
+  2004835150: "IFCPLACEMENT",
+  603570806: "IFCPLANARBOX",
+  1663979128: "IFCPLANAREXTENT",
+  220341763: "IFCPLANE",
+  3171933400: "IFCPLATE",
+  1156407060: "IFCPLATESTANDARDCASE",
+  4017108033: "IFCPLATETYPE",
+  2067069095: "IFCPOINT",
+  4022376103: "IFCPOINTONCURVE",
+  1423911732: "IFCPOINTONSURFACE",
+  2924175390: "IFCPOLYLOOP",
+  2775532180: "IFCPOLYGONALBOUNDEDHALFSPACE",
+  2839578677: "IFCPOLYGONALFACESET",
+  3724593414: "IFCPOLYLINE",
+  3740093272: "IFCPORT",
+  1946335990: "IFCPOSITIONINGELEMENT",
+  3355820592: "IFCPOSTALADDRESS",
+  759155922: "IFCPREDEFINEDCOLOUR",
+  2559016684: "IFCPREDEFINEDCURVEFONT",
+  3727388367: "IFCPREDEFINEDITEM",
+  3778827333: "IFCPREDEFINEDPROPERTIES",
+  3967405729: "IFCPREDEFINEDPROPERTYSET",
+  1775413392: "IFCPREDEFINEDTEXTFONT",
+  677532197: "IFCPRESENTATIONITEM",
+  2022622350: "IFCPRESENTATIONLAYERASSIGNMENT",
+  1304840413: "IFCPRESENTATIONLAYERWITHSTYLE",
+  3119450353: "IFCPRESENTATIONSTYLE",
+  2417041796: "IFCPRESENTATIONSTYLEASSIGNMENT",
+  2744685151: "IFCPROCEDURE",
+  569719735: "IFCPROCEDURETYPE",
+  2945172077: "IFCPROCESS",
+  4208778838: "IFCPRODUCT",
+  673634403: "IFCPRODUCTDEFINITIONSHAPE",
+  2095639259: "IFCPRODUCTREPRESENTATION",
+  3958567839: "IFCPROFILEDEF",
+  2802850158: "IFCPROFILEPROPERTIES",
+  103090709: "IFCPROJECT",
+  653396225: "IFCPROJECTLIBRARY",
+  2904328755: "IFCPROJECTORDER",
+  3843373140: "IFCPROJECTEDCRS",
+  3651124850: "IFCPROJECTIONELEMENT",
+  2598011224: "IFCPROPERTY",
+  986844984: "IFCPROPERTYABSTRACTION",
+  871118103: "IFCPROPERTYBOUNDEDVALUE",
+  1680319473: "IFCPROPERTYDEFINITION",
+  148025276: "IFCPROPERTYDEPENDENCYRELATIONSHIP",
+  4166981789: "IFCPROPERTYENUMERATEDVALUE",
+  3710013099: "IFCPROPERTYENUMERATION",
+  2752243245: "IFCPROPERTYLISTVALUE",
+  941946838: "IFCPROPERTYREFERENCEVALUE",
+  1451395588: "IFCPROPERTYSET",
+  3357820518: "IFCPROPERTYSETDEFINITION",
+  492091185: "IFCPROPERTYSETTEMPLATE",
+  3650150729: "IFCPROPERTYSINGLEVALUE",
+  110355661: "IFCPROPERTYTABLEVALUE",
+  3521284610: "IFCPROPERTYTEMPLATE",
+  1482703590: "IFCPROPERTYTEMPLATEDEFINITION",
+  738039164: "IFCPROTECTIVEDEVICE",
+  2295281155: "IFCPROTECTIVEDEVICETRIPPINGUNIT",
+  655969474: "IFCPROTECTIVEDEVICETRIPPINGUNITTYPE",
+  1842657554: "IFCPROTECTIVEDEVICETYPE",
+  3219374653: "IFCPROXY",
+  90941305: "IFCPUMP",
+  2250791053: "IFCPUMPTYPE",
+  2044713172: "IFCQUANTITYAREA",
+  2093928680: "IFCQUANTITYCOUNT",
+  931644368: "IFCQUANTITYLENGTH",
+  2090586900: "IFCQUANTITYSET",
+  3252649465: "IFCQUANTITYTIME",
+  2405470396: "IFCQUANTITYVOLUME",
+  825690147: "IFCQUANTITYWEIGHT",
+  2262370178: "IFCRAILING",
+  2893384427: "IFCRAILINGTYPE",
+  3024970846: "IFCRAMP",
+  3283111854: "IFCRAMPFLIGHT",
+  2324767716: "IFCRAMPFLIGHTTYPE",
+  1469900589: "IFCRAMPTYPE",
+  1232101972: "IFCRATIONALBSPLINECURVEWITHKNOTS",
+  683857671: "IFCRATIONALBSPLINESURFACEWITHKNOTS",
+  2770003689: "IFCRECTANGLEHOLLOWPROFILEDEF",
+  3615266464: "IFCRECTANGLEPROFILEDEF",
+  2798486643: "IFCRECTANGULARPYRAMID",
+  3454111270: "IFCRECTANGULARTRIMMEDSURFACE",
+  3915482550: "IFCRECURRENCEPATTERN",
+  2433181523: "IFCREFERENCE",
+  4021432810: "IFCREFERENT",
+  3413951693: "IFCREGULARTIMESERIES",
+  1580146022: "IFCREINFORCEMENTBARPROPERTIES",
+  3765753017: "IFCREINFORCEMENTDEFINITIONPROPERTIES",
+  979691226: "IFCREINFORCINGBAR",
+  2572171363: "IFCREINFORCINGBARTYPE",
+  3027567501: "IFCREINFORCINGELEMENT",
+  964333572: "IFCREINFORCINGELEMENTTYPE",
+  2320036040: "IFCREINFORCINGMESH",
+  2310774935: "IFCREINFORCINGMESHTYPE",
+  160246688: "IFCRELAGGREGATES",
+  3939117080: "IFCRELASSIGNS",
+  1683148259: "IFCRELASSIGNSTOACTOR",
+  2495723537: "IFCRELASSIGNSTOCONTROL",
+  1307041759: "IFCRELASSIGNSTOGROUP",
+  1027710054: "IFCRELASSIGNSTOGROUPBYFACTOR",
+  4278684876: "IFCRELASSIGNSTOPROCESS",
+  2857406711: "IFCRELASSIGNSTOPRODUCT",
+  205026976: "IFCRELASSIGNSTORESOURCE",
+  1865459582: "IFCRELASSOCIATES",
+  4095574036: "IFCRELASSOCIATESAPPROVAL",
+  919958153: "IFCRELASSOCIATESCLASSIFICATION",
+  2728634034: "IFCRELASSOCIATESCONSTRAINT",
+  982818633: "IFCRELASSOCIATESDOCUMENT",
+  3840914261: "IFCRELASSOCIATESLIBRARY",
+  2655215786: "IFCRELASSOCIATESMATERIAL",
+  826625072: "IFCRELCONNECTS",
+  1204542856: "IFCRELCONNECTSELEMENTS",
+  3945020480: "IFCRELCONNECTSPATHELEMENTS",
+  4201705270: "IFCRELCONNECTSPORTTOELEMENT",
+  3190031847: "IFCRELCONNECTSPORTS",
+  2127690289: "IFCRELCONNECTSSTRUCTURALACTIVITY",
+  1638771189: "IFCRELCONNECTSSTRUCTURALMEMBER",
+  504942748: "IFCRELCONNECTSWITHECCENTRICITY",
+  3678494232: "IFCRELCONNECTSWITHREALIZINGELEMENTS",
+  3242617779: "IFCRELCONTAINEDINSPATIALSTRUCTURE",
+  886880790: "IFCRELCOVERSBLDGELEMENTS",
+  2802773753: "IFCRELCOVERSSPACES",
+  2565941209: "IFCRELDECLARES",
+  2551354335: "IFCRELDECOMPOSES",
+  693640335: "IFCRELDEFINES",
+  1462361463: "IFCRELDEFINESBYOBJECT",
+  4186316022: "IFCRELDEFINESBYPROPERTIES",
+  307848117: "IFCRELDEFINESBYTEMPLATE",
+  781010003: "IFCRELDEFINESBYTYPE",
+  3940055652: "IFCRELFILLSELEMENT",
+  279856033: "IFCRELFLOWCONTROLELEMENTS",
+  427948657: "IFCRELINTERFERESELEMENTS",
+  3268803585: "IFCRELNESTS",
+  1441486842: "IFCRELPOSITIONS",
+  750771296: "IFCRELPROJECTSELEMENT",
+  1245217292: "IFCRELREFERENCEDINSPATIALSTRUCTURE",
+  4122056220: "IFCRELSEQUENCE",
+  366585022: "IFCRELSERVICESBUILDINGS",
+  3451746338: "IFCRELSPACEBOUNDARY",
+  3523091289: "IFCRELSPACEBOUNDARY1STLEVEL",
+  1521410863: "IFCRELSPACEBOUNDARY2NDLEVEL",
+  1401173127: "IFCRELVOIDSELEMENT",
+  478536968: "IFCRELATIONSHIP",
+  816062949: "IFCREPARAMETRISEDCOMPOSITECURVESEGMENT",
+  1076942058: "IFCREPRESENTATION",
+  3377609919: "IFCREPRESENTATIONCONTEXT",
+  3008791417: "IFCREPRESENTATIONITEM",
+  1660063152: "IFCREPRESENTATIONMAP",
+  2914609552: "IFCRESOURCE",
+  2943643501: "IFCRESOURCEAPPROVALRELATIONSHIP",
+  1608871552: "IFCRESOURCECONSTRAINTRELATIONSHIP",
+  2439245199: "IFCRESOURCELEVELRELATIONSHIP",
+  1042787934: "IFCRESOURCETIME",
+  1856042241: "IFCREVOLVEDAREASOLID",
+  3243963512: "IFCREVOLVEDAREASOLIDTAPERED",
+  4158566097: "IFCRIGHTCIRCULARCONE",
+  3626867408: "IFCRIGHTCIRCULARCYLINDER",
+  2016517767: "IFCROOF",
+  2781568857: "IFCROOFTYPE",
+  2341007311: "IFCROOT",
+  2778083089: "IFCROUNDEDRECTANGLEPROFILEDEF",
+  448429030: "IFCSIUNIT",
+  3053780830: "IFCSANITARYTERMINAL",
+  1768891740: "IFCSANITARYTERMINALTYPE",
+  1054537805: "IFCSCHEDULINGTIME",
+  2157484638: "IFCSEAMCURVE",
+  2042790032: "IFCSECTIONPROPERTIES",
+  4165799628: "IFCSECTIONREINFORCEMENTPROPERTIES",
+  1862484736: "IFCSECTIONEDSOLID",
+  1290935644: "IFCSECTIONEDSOLIDHORIZONTAL",
+  1509187699: "IFCSECTIONEDSPINE",
+  4086658281: "IFCSENSOR",
+  1783015770: "IFCSENSORTYPE",
+  1329646415: "IFCSHADINGDEVICE",
+  4074543187: "IFCSHADINGDEVICETYPE",
+  867548509: "IFCSHAPEASPECT",
+  3982875396: "IFCSHAPEMODEL",
+  4240577450: "IFCSHAPEREPRESENTATION",
+  4124623270: "IFCSHELLBASEDSURFACEMODEL",
+  3692461612: "IFCSIMPLEPROPERTY",
+  3663146110: "IFCSIMPLEPROPERTYTEMPLATE",
+  4097777520: "IFCSITE",
+  1529196076: "IFCSLAB",
+  3127900445: "IFCSLABELEMENTEDCASE",
+  3027962421: "IFCSLABSTANDARDCASE",
+  2533589738: "IFCSLABTYPE",
+  2609359061: "IFCSLIPPAGECONNECTIONCONDITION",
+  3420628829: "IFCSOLARDEVICE",
+  1072016465: "IFCSOLARDEVICETYPE",
+  723233188: "IFCSOLIDMODEL",
+  3856911033: "IFCSPACE",
+  1999602285: "IFCSPACEHEATER",
+  1305183839: "IFCSPACEHEATERTYPE",
+  3812236995: "IFCSPACETYPE",
+  1412071761: "IFCSPATIALELEMENT",
+  710998568: "IFCSPATIALELEMENTTYPE",
+  2706606064: "IFCSPATIALSTRUCTUREELEMENT",
+  3893378262: "IFCSPATIALSTRUCTUREELEMENTTYPE",
+  463610769: "IFCSPATIALZONE",
+  2481509218: "IFCSPATIALZONETYPE",
+  451544542: "IFCSPHERE",
+  4015995234: "IFCSPHERICALSURFACE",
+  1404847402: "IFCSTACKTERMINAL",
+  3112655638: "IFCSTACKTERMINALTYPE",
+  331165859: "IFCSTAIR",
+  4252922144: "IFCSTAIRFLIGHT",
+  1039846685: "IFCSTAIRFLIGHTTYPE",
+  338393293: "IFCSTAIRTYPE",
+  682877961: "IFCSTRUCTURALACTION",
+  3544373492: "IFCSTRUCTURALACTIVITY",
+  2515109513: "IFCSTRUCTURALANALYSISMODEL",
+  1179482911: "IFCSTRUCTURALCONNECTION",
+  2273995522: "IFCSTRUCTURALCONNECTIONCONDITION",
+  1004757350: "IFCSTRUCTURALCURVEACTION",
+  4243806635: "IFCSTRUCTURALCURVECONNECTION",
+  214636428: "IFCSTRUCTURALCURVEMEMBER",
+  2445595289: "IFCSTRUCTURALCURVEMEMBERVARYING",
+  2757150158: "IFCSTRUCTURALCURVEREACTION",
+  3136571912: "IFCSTRUCTURALITEM",
+  1807405624: "IFCSTRUCTURALLINEARACTION",
+  2162789131: "IFCSTRUCTURALLOAD",
+  385403989: "IFCSTRUCTURALLOADCASE",
+  3478079324: "IFCSTRUCTURALLOADCONFIGURATION",
+  1252848954: "IFCSTRUCTURALLOADGROUP",
+  1595516126: "IFCSTRUCTURALLOADLINEARFORCE",
+  609421318: "IFCSTRUCTURALLOADORRESULT",
+  2668620305: "IFCSTRUCTURALLOADPLANARFORCE",
+  2473145415: "IFCSTRUCTURALLOADSINGLEDISPLACEMENT",
+  1973038258: "IFCSTRUCTURALLOADSINGLEDISPLACEMENTDISTORTION",
+  1597423693: "IFCSTRUCTURALLOADSINGLEFORCE",
+  1190533807: "IFCSTRUCTURALLOADSINGLEFORCEWARPING",
+  2525727697: "IFCSTRUCTURALLOADSTATIC",
+  3408363356: "IFCSTRUCTURALLOADTEMPERATURE",
+  530289379: "IFCSTRUCTURALMEMBER",
+  1621171031: "IFCSTRUCTURALPLANARACTION",
+  2082059205: "IFCSTRUCTURALPOINTACTION",
+  734778138: "IFCSTRUCTURALPOINTCONNECTION",
+  1235345126: "IFCSTRUCTURALPOINTREACTION",
+  3689010777: "IFCSTRUCTURALREACTION",
+  2986769608: "IFCSTRUCTURALRESULTGROUP",
+  3657597509: "IFCSTRUCTURALSURFACEACTION",
+  1975003073: "IFCSTRUCTURALSURFACECONNECTION",
+  3979015343: "IFCSTRUCTURALSURFACEMEMBER",
+  2218152070: "IFCSTRUCTURALSURFACEMEMBERVARYING",
+  603775116: "IFCSTRUCTURALSURFACEREACTION",
+  2830218821: "IFCSTYLEMODEL",
+  3958052878: "IFCSTYLEDITEM",
+  3049322572: "IFCSTYLEDREPRESENTATION",
+  148013059: "IFCSUBCONTRACTRESOURCE",
+  4095615324: "IFCSUBCONTRACTRESOURCETYPE",
+  2233826070: "IFCSUBEDGE",
+  2513912981: "IFCSURFACE",
+  699246055: "IFCSURFACECURVE",
+  2028607225: "IFCSURFACECURVESWEPTAREASOLID",
+  3101698114: "IFCSURFACEFEATURE",
+  2809605785: "IFCSURFACEOFLINEAREXTRUSION",
+  4124788165: "IFCSURFACEOFREVOLUTION",
+  2934153892: "IFCSURFACEREINFORCEMENTAREA",
+  1300840506: "IFCSURFACESTYLE",
+  3303107099: "IFCSURFACESTYLELIGHTING",
+  1607154358: "IFCSURFACESTYLEREFRACTION",
+  1878645084: "IFCSURFACESTYLERENDERING",
+  846575682: "IFCSURFACESTYLESHADING",
+  1351298697: "IFCSURFACESTYLEWITHTEXTURES",
+  626085974: "IFCSURFACETEXTURE",
+  2247615214: "IFCSWEPTAREASOLID",
+  1260650574: "IFCSWEPTDISKSOLID",
+  1096409881: "IFCSWEPTDISKSOLIDPOLYGONAL",
+  230924584: "IFCSWEPTSURFACE",
+  1162798199: "IFCSWITCHINGDEVICE",
+  2315554128: "IFCSWITCHINGDEVICETYPE",
+  2254336722: "IFCSYSTEM",
+  413509423: "IFCSYSTEMFURNITUREELEMENT",
+  1580310250: "IFCSYSTEMFURNITUREELEMENTTYPE",
+  3071757647: "IFCTSHAPEPROFILEDEF",
+  985171141: "IFCTABLE",
+  2043862942: "IFCTABLECOLUMN",
+  531007025: "IFCTABLEROW",
+  812556717: "IFCTANK",
+  5716631: "IFCTANKTYPE",
+  3473067441: "IFCTASK",
+  1549132990: "IFCTASKTIME",
+  2771591690: "IFCTASKTIMERECURRING",
+  3206491090: "IFCTASKTYPE",
+  912023232: "IFCTELECOMADDRESS",
+  3824725483: "IFCTENDON",
+  2347447852: "IFCTENDONANCHOR",
+  3081323446: "IFCTENDONANCHORTYPE",
+  3663046924: "IFCTENDONCONDUIT",
+  2281632017: "IFCTENDONCONDUITTYPE",
+  2415094496: "IFCTENDONTYPE",
+  2387106220: "IFCTESSELLATEDFACESET",
+  901063453: "IFCTESSELLATEDITEM",
+  4282788508: "IFCTEXTLITERAL",
+  3124975700: "IFCTEXTLITERALWITHEXTENT",
+  1447204868: "IFCTEXTSTYLE",
+  1983826977: "IFCTEXTSTYLEFONTMODEL",
+  2636378356: "IFCTEXTSTYLEFORDEFINEDFONT",
+  1640371178: "IFCTEXTSTYLETEXTMODEL",
+  280115917: "IFCTEXTURECOORDINATE",
+  1742049831: "IFCTEXTURECOORDINATEGENERATOR",
+  2552916305: "IFCTEXTUREMAP",
+  1210645708: "IFCTEXTUREVERTEX",
+  3611470254: "IFCTEXTUREVERTEXLIST",
+  1199560280: "IFCTIMEPERIOD",
+  3101149627: "IFCTIMESERIES",
+  581633288: "IFCTIMESERIESVALUE",
+  1377556343: "IFCTOPOLOGICALREPRESENTATIONITEM",
+  1735638870: "IFCTOPOLOGYREPRESENTATION",
+  1935646853: "IFCTOROIDALSURFACE",
+  3825984169: "IFCTRANSFORMER",
+  1692211062: "IFCTRANSFORMERTYPE",
+  2595432518: "IFCTRANSITIONCURVESEGMENT2D",
+  1620046519: "IFCTRANSPORTELEMENT",
+  2097647324: "IFCTRANSPORTELEMENTTYPE",
+  2715220739: "IFCTRAPEZIUMPROFILEDEF",
+  2916149573: "IFCTRIANGULATEDFACESET",
+  1229763772: "IFCTRIANGULATEDIRREGULARNETWORK",
+  3593883385: "IFCTRIMMEDCURVE",
+  3026737570: "IFCTUBEBUNDLE",
+  1600972822: "IFCTUBEBUNDLETYPE",
+  1628702193: "IFCTYPEOBJECT",
+  3736923433: "IFCTYPEPROCESS",
+  2347495698: "IFCTYPEPRODUCT",
+  3698973494: "IFCTYPERESOURCE",
+  427810014: "IFCUSHAPEPROFILEDEF",
+  180925521: "IFCUNITASSIGNMENT",
+  630975310: "IFCUNITARYCONTROLELEMENT",
+  3179687236: "IFCUNITARYCONTROLELEMENTTYPE",
+  4292641817: "IFCUNITARYEQUIPMENT",
+  1911125066: "IFCUNITARYEQUIPMENTTYPE",
+  4207607924: "IFCVALVE",
+  728799441: "IFCVALVETYPE",
+  1417489154: "IFCVECTOR",
+  2799835756: "IFCVERTEX",
+  2759199220: "IFCVERTEXLOOP",
+  1907098498: "IFCVERTEXPOINT",
+  1530820697: "IFCVIBRATIONDAMPER",
+  3956297820: "IFCVIBRATIONDAMPERTYPE",
+  2391383451: "IFCVIBRATIONISOLATOR",
+  3313531582: "IFCVIBRATIONISOLATORTYPE",
+  2769231204: "IFCVIRTUALELEMENT",
+  891718957: "IFCVIRTUALGRIDINTERSECTION",
+  926996030: "IFCVOIDINGFEATURE",
+  2391406946: "IFCWALL",
+  4156078855: "IFCWALLELEMENTEDCASE",
+  3512223829: "IFCWALLSTANDARDCASE",
+  1898987631: "IFCWALLTYPE",
+  4237592921: "IFCWASTETERMINAL",
+  1133259667: "IFCWASTETERMINALTYPE",
+  3304561284: "IFCWINDOW",
+  336235671: "IFCWINDOWLININGPROPERTIES",
+  512836454: "IFCWINDOWPANELPROPERTIES",
+  486154966: "IFCWINDOWSTANDARDCASE",
+  1299126871: "IFCWINDOWSTYLE",
+  4009809668: "IFCWINDOWTYPE",
+  4088093105: "IFCWORKCALENDAR",
+  1028945134: "IFCWORKCONTROL",
+  4218914973: "IFCWORKPLAN",
+  3342526732: "IFCWORKSCHEDULE",
+  1236880293: "IFCWORKTIME",
+  2543172580: "IFCZSHAPEPROFILEDEF",
+  1033361043: "IFCZONE",
+};
+
+class JSONPropertyManager extends BasePropertyManager {
+
+  async getItemProperties(modelID, id, recursive = false) {
+    return {
+      ...this.state.models[modelID].jsonData[id]
+    };
+  }
+
+  async getSpatialStructure(modelID, includeProperties) {
+    const chunks = await this.getSpatialTreeChunks(modelID);
+    const projectsIDs = await this.getAllItemsOfType(modelID, IFCPROJECT, false);
+    const projectID = projectsIDs[0];
+    const project = JSONPropertyManager.newIfcProject(projectID);
+    await this.getSpatialNode(modelID, project, chunks, includeProperties);
+    return {
+      ...project
+    };
+  }
+
+  async getAllItemsOfType(modelID, type, verbose) {
+    const data = this.state.models[modelID].jsonData;
+    const typeName = IfcTypesMap[type];
+    if (!typeName) {
+      throw new Error(`Type not found: ${type}`);
+    }
+    return this.filterItemsByType(data, typeName, verbose);
+  }
+
+  async getProperty(modelID, elementID, recursive = false, propName) {
+    const resultIDs = await this.getAllRelatedItemsOfType(modelID, elementID, propName);
+    const result = this.getItemsByID(modelID, resultIDs);
+    if (recursive) {
+      result.forEach(result => this.getReferencesRecursively(modelID, result));
+    }
+    return result;
+  }
+
+  getNodeType(modelID, id) {
+    return this.state.models[modelID].jsonData[id].type;
+  }
+
+  async getChunks(modelID, chunks, propNames) {
+    const relation = await this.getAllItemsOfType(modelID, propNames.name, true);
+    relation.forEach(rel => {
+      this.saveChunk(chunks, propNames, rel);
+    });
+  }
+
+  filterItemsByType(data, typeName, verbose) {
+    const result = [];
+    Object.keys(data).forEach(key => {
+      const numKey = parseInt(key);
+      if (data[numKey].type.toUpperCase() === typeName) {
+        result.push(verbose ? {
+          ...data[numKey]
+        } : numKey);
+      }
+    });
+    return result;
+  }
+
+  async getAllRelatedItemsOfType(modelID, id, propNames) {
+    const lines = await this.getAllItemsOfType(modelID, propNames.name, true);
+    const IDs = [];
+    lines.forEach(line => {
+      const isRelated = JSONPropertyManager.isRelated(id, line, propNames);
+      if (isRelated)
+        this.getRelated(line, propNames, IDs);
+    });
+    return IDs;
+  }
+
+  getItemsByID(modelID, ids) {
+    const data = this.state.models[modelID].jsonData;
+    const result = [];
+    ids.forEach(id => result.push({
+      ...data[id]
+    }));
+    return result;
+  }
+
+  getReferencesRecursively(modelID, jsonObject) {
+    if (jsonObject == undefined)
+      return;
+    const keys = Object.keys(jsonObject);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      this.getJSONItem(modelID, jsonObject, key);
+    }
+  }
+
+  getJSONItem(modelID, jsonObject, key) {
+    if (Array.isArray(jsonObject[key])) {
+      return this.getMultipleJSONItems(modelID, jsonObject, key);
+    }
+    if (jsonObject[key] && jsonObject[key].type === 5) {
+      jsonObject[key] = this.getItemsByID(modelID, [jsonObject[key].value])[0];
+      this.getReferencesRecursively(modelID, jsonObject[key]);
+    }
+  }
+
+  getMultipleJSONItems(modelID, jsonObject, key) {
+    jsonObject[key] = jsonObject[key].map((item) => {
+      if (item.type === 5) {
+        item = this.getItemsByID(modelID, [item.value])[0];
+        this.getReferencesRecursively(modelID, item);
+      }
+      return item;
+    });
+  }
+
+}
+
+class PropertyManager {
+
+  constructor(state) {
+    this.state = state;
+    this.webIfcProps = new WebIfcPropertyManager(state);
+    this.jsonProps = new JSONPropertyManager(state);
+    this.currentProps = this.webIfcProps;
+  }
+
+  getExpressId(geometry, faceIndex) {
+    if (!geometry.index)
+      throw new Error('Geometry does not have index information.');
+    const geoIndex = geometry.index.array;
+    return geometry.attributes[IdAttrName].getX(geoIndex[3 * faceIndex]);
+  }
+
+  async getItemProperties(modelID, elementID, recursive = false) {
+    this.updateCurrentProps();
+    return this.currentProps.getItemProperties(modelID, elementID, recursive);
+  }
+
+  async getAllItemsOfType(modelID, type, verbose) {
+    this.updateCurrentProps();
+    return this.currentProps.getAllItemsOfType(modelID, type, verbose);
+  }
+
+  async getPropertySets(modelID, elementID, recursive = false) {
+    this.updateCurrentProps();
+    return this.currentProps.getPropertySets(modelID, elementID, recursive);
+  }
+
+  async getTypeProperties(modelID, elementID, recursive = false) {
+    this.updateCurrentProps();
+    return this.currentProps.getTypeProperties(modelID, elementID, recursive);
+  }
+
+  async getMaterialsProperties(modelID, elementID, recursive = false) {
+    this.updateCurrentProps();
+    return this.currentProps.getMaterialsProperties(modelID, elementID, recursive);
+  }
+
+  async getSpatialStructure(modelID, includeProperties) {
+    this.updateCurrentProps();
+    if (!this.state.useJSON && includeProperties) {
+      console.warn('Including properties in getSpatialStructure with the JSON workflow disabled can lead to poor performance.');
+    }
+    return await this.currentProps.getSpatialStructure(modelID, includeProperties);
+  }
+
+  updateCurrentProps() {
+    this.currentProps = this.state.useJSON ? this.jsonProps : this.webIfcProps;
+  }
+
+}
+
+class TypeManager {
+
+  constructor(state) {
+    this.state = state;
+    this.state = state;
+  }
+
+  async getAllTypes(worker) {
+    for (let modelID in this.state.models) {
+      if (this.state.models.hasOwnProperty(modelID)) {
+        const types = this.state.models[modelID].types;
+        if (Object.keys(types).length == 0) {
+          await this.getAllTypesOfModel(parseInt(modelID), worker);
+        }
+      }
+    }
+  }
+
+  async getAllTypesOfModel(modelID, worker) {
+    const result = {};
+    const elements = Object.keys(IfcElements).map((e) => parseInt(e));
+    for (let i = 0; i < elements.length; i++) {
+      const element = elements[i];
+      const lines = await this.state.api.GetLineIDsWithType(modelID, element);
+      const size = lines.size();
+      for (let i = 0; i < size; i++)
+        result[lines.get(i)] = element;
+    }
+    if (this.state.worker.active && worker) {
+      await worker.workerState.updateModelStateTypes(modelID, result);
+    }
+    this.state.models[modelID].types = result;
+  }
+
+}
+
+class BvhManager {
+
+  initializeMeshBVH(computeBoundsTree, disposeBoundsTree, acceleratedRaycast) {
+    this.computeBoundsTree = computeBoundsTree;
+    this.disposeBoundsTree = disposeBoundsTree;
+    this.acceleratedRaycast = acceleratedRaycast;
+    this.setupThreeMeshBVH();
+  }
+
+  applyThreeMeshBVH(geometry) {
+    if (this.computeBoundsTree)
+      geometry.computeBoundsTree();
+  }
+
+  setupThreeMeshBVH() {
+    if (!this.computeBoundsTree || !this.disposeBoundsTree || !this.acceleratedRaycast)
+      return;
+    BufferGeometry.prototype.computeBoundsTree = this.computeBoundsTree;
+    BufferGeometry.prototype.disposeBoundsTree = this.disposeBoundsTree;
+    Mesh.prototype.raycast = this.acceleratedRaycast;
+  }
+
+}
+
+var WorkerActions;
+(function(WorkerActions) {
+  WorkerActions["updateStateUseJson"] = "updateStateUseJson";
+  WorkerActions["updateStateWebIfcSettings"] = "updateStateWebIfcSettings";
+  WorkerActions["updateModelStateTypes"] = "updateModelStateTypes";
+  WorkerActions["updateModelStateJsonData"] = "updateModelStateJsonData";
+  WorkerActions["loadJsonDataFromWorker"] = "loadJsonDataFromWorker";
+  WorkerActions["dispose"] = "dispose";
+  WorkerActions["Close"] = "Close";
+  WorkerActions["DisposeWebIfc"] = "DisposeWebIfc";
+  WorkerActions["Init"] = "Init";
+  WorkerActions["OpenModel"] = "OpenModel";
+  WorkerActions["CreateModel"] = "CreateModel";
+  WorkerActions["ExportFileAsIFC"] = "ExportFileAsIFC";
+  WorkerActions["GetGeometry"] = "GetGeometry";
+  WorkerActions["GetLine"] = "GetLine";
+  WorkerActions["GetAndClearErrors"] = "GetAndClearErrors";
+  WorkerActions["WriteLine"] = "WriteLine";
+  WorkerActions["FlattenLine"] = "FlattenLine";
+  WorkerActions["GetRawLineData"] = "GetRawLineData";
+  WorkerActions["WriteRawLineData"] = "WriteRawLineData";
+  WorkerActions["GetLineIDsWithType"] = "GetLineIDsWithType";
+  WorkerActions["GetAllLines"] = "GetAllLines";
+  WorkerActions["SetGeometryTransformation"] = "SetGeometryTransformation";
+  WorkerActions["GetCoordinationMatrix"] = "GetCoordinationMatrix";
+  WorkerActions["GetVertexArray"] = "GetVertexArray";
+  WorkerActions["GetIndexArray"] = "GetIndexArray";
+  WorkerActions["getSubArray"] = "getSubArray";
+  WorkerActions["CloseModel"] = "CloseModel";
+  WorkerActions["StreamAllMeshes"] = "StreamAllMeshes";
+  WorkerActions["StreamAllMeshesWithTypes"] = "StreamAllMeshesWithTypes";
+  WorkerActions["IsModelOpen"] = "IsModelOpen";
+  WorkerActions["LoadAllGeometry"] = "LoadAllGeometry";
+  WorkerActions["GetFlatMesh"] = "GetFlatMesh";
+  WorkerActions["SetWasmPath"] = "SetWasmPath";
+  WorkerActions["parse"] = "parse";
+  WorkerActions["setupOptionalCategories"] = "setupOptionalCategories";
+  WorkerActions["getExpressId"] = "getExpressId";
+  WorkerActions["initializeProperties"] = "initializeProperties";
+  WorkerActions["getAllItemsOfType"] = "getAllItemsOfType";
+  WorkerActions["getItemProperties"] = "getItemProperties";
+  WorkerActions["getMaterialsProperties"] = "getMaterialsProperties";
+  WorkerActions["getPropertySets"] = "getPropertySets";
+  WorkerActions["getSpatialStructure"] = "getSpatialStructure";
+  WorkerActions["getTypeProperties"] = "getTypeProperties";
+})(WorkerActions || (WorkerActions = {}));
+var WorkerAPIs;
+(function(WorkerAPIs) {
+  WorkerAPIs["workerState"] = "workerState";
+  WorkerAPIs["webIfc"] = "webIfc";
+  WorkerAPIs["properties"] = "properties";
+  WorkerAPIs["parser"] = "parser";
+})(WorkerAPIs || (WorkerAPIs = {}));
+
+class Vector {
+
+  constructor(vector) {
+    this._data = {};
+    this._size = vector.size;
+    const keys = Object.keys(vector).filter((key) => key.indexOf('size') === -1).map(key => parseInt(key));
+    keys.forEach((key) => this._data[key] = vector[key]);
+  }
+
+  size() {
+    return this._size;
+  }
+
+  get(index) {
+    return this._data[index];
+  }
+
+}
+
+class IfcGeometry {
+
+  constructor(vector) {
+    this._GetVertexData = vector.GetVertexData;
+    this._GetVertexDataSize = vector.GetVertexDataSize;
+    this._GetIndexData = vector.GetIndexData;
+    this._GetIndexDataSize = vector.GetIndexDataSize;
+  }
+
+  GetVertexData() {
+    return this._GetVertexData;
+  }
+
+  GetVertexDataSize() {
+    return this._GetVertexDataSize;
+  }
+
+  GetIndexData() {
+    return this._GetIndexData;
+  }
+
+  GetIndexDataSize() {
+    return this._GetIndexDataSize;
+  }
+
+}
+
+class FlatMesh {
+
+  constructor(serializer, flatMesh) {
+    this.expressID = flatMesh.expressID;
+    this.geometries = serializer.reconstructVector(flatMesh.geometries);
+  }
+
+}
+
+class FlatMeshVector {
+
+  constructor(serializer, vector) {
+    this._data = {};
+    this._size = vector.size;
+    const keys = Object.keys(vector).filter((key) => key.indexOf('size') === -1).map(key => parseInt(key));
+    keys.forEach(key => this._data[key] = serializer.reconstructFlatMesh(vector[key]));
+  }
+
+  size() {
+    return this._size;
+  }
+
+  get(index) {
+    return this._data[index];
+  }
+
+}
+
+class SerializedMaterial {
+
+  constructor(material) {
+    this.color = [material.color.r, material.color.g, material.color.b];
+    this.opacity = material.opacity;
+    this.transparent = material.transparent;
+  }
+
+}
+
+class MaterialReconstructor {
+
+  static new(material) {
+    return new MeshLambertMaterial({
+      color: new Color(material.color[0], material.color[1], material.color[2]),
+      opacity: material.opacity,
+      transparent: material.transparent,
+      side: DoubleSide
+    });
+  }
+
+}
+
+class SerializedGeometry {
+
+  constructor(geometry) {
+    var _a,
+      _b,
+      _c,
+      _d;
+    this.position = ((_a = geometry.attributes.position) === null || _a === void 0 ? void 0 : _a.array) || [];
+    this.normal = ((_b = geometry.attributes.normal) === null || _b === void 0 ? void 0 : _b.array) || [];
+    this.expressID = ((_c = geometry.attributes.expressID) === null || _c === void 0 ? void 0 : _c.array) || [];
+    this.index = ((_d = geometry.index) === null || _d === void 0 ? void 0 : _d.array) || [];
+    this.groups = geometry.groups;
+  }
+
+}
+
+class GeometryReconstructor {
+
+  static new(serialized) {
+    const geom = new BufferGeometry();
+    GeometryReconstructor.set(geom, 'expressID', new Uint32Array(serialized.expressID), 1);
+    GeometryReconstructor.set(geom, 'position', new Float32Array(serialized.position), 3);
+    GeometryReconstructor.set(geom, 'normal', new Float32Array(serialized.normal), 3);
+    geom.setIndex(Array. from (serialized.index));
+    geom.groups = serialized.groups;
+    return geom;
+  }
+
+  static set(geom, name, data, size) {
+    if (data.length > 0) {
+      geom.setAttribute(name, new BufferAttribute(data, size));
+    }
+  }
+
+}
+
+class SerializedMesh {
+
+  constructor(model) {
+    this.materials = [];
+    this.modelID = model.modelID;
+    this.geometry = new SerializedGeometry(model.geometry);
+    if (Array.isArray(model.material)) {
+      model.material.forEach(mat => {
+        this.materials.push(new SerializedMaterial(mat));
+      });
+    } else {
+      this.materials.push(new SerializedMaterial(model.material));
+    }
+  }
+
+}
+
+class MeshReconstructor {
+
+  static new(serialized) {
+    const model = new IFCModel();
+    model.modelID = serialized.modelID;
+    model.geometry = GeometryReconstructor.new(serialized.geometry);
+    MeshReconstructor.getMaterials(serialized, model);
+    return model;
+  }
+
+  static getMaterials(serialized, model) {
+    model.material = [];
+    const mats = model.material;
+    serialized.materials.forEach(mat => {
+      mats.push(MaterialReconstructor.new(mat));
+    });
+  }
+
+}
+
+class Serializer {
+
+  serializeVector(vector) {
+    const size = vector.size();
+    const serialized = {
+      size
+    };
+    for (let i = 0; i < size; i++) {
+      serialized[i] = vector.get(i);
+    }
+    return serialized;
+  }
+
+  reconstructVector(vector) {
+    return new Vector(vector);
+  }
+
+  serializeIfcGeometry(geometry) {
+    const GetVertexData = geometry.GetVertexData();
+    const GetVertexDataSize = geometry.GetVertexDataSize();
+    const GetIndexData = geometry.GetIndexData();
+    const GetIndexDataSize = geometry.GetIndexDataSize();
+    return {
+      GetVertexData,
+      GetVertexDataSize,
+      GetIndexData,
+      GetIndexDataSize
+    };
+  }
+
+  reconstructIfcGeometry(geometry) {
+    return new IfcGeometry(geometry);
+  }
+
+  serializeFlatMesh(flatMesh) {
+    return {
+      expressID: flatMesh.expressID,
+      geometries: this.serializeVector(flatMesh.geometries)
+    };
+  }
+
+  reconstructFlatMesh(flatMesh) {
+    return new FlatMesh(this, flatMesh);
+  }
+
+  serializeFlatMeshVector(vector) {
+    const size = vector.size();
+    const serialized = {
+      size
+    };
+    for (let i = 0; i < size; i++) {
+      const flatMesh = vector.get(i);
+      serialized[i] = this.serializeFlatMesh(flatMesh);
+    }
+    return serialized;
+  }
+
+  reconstructFlatMeshVector(vector) {
+    return new FlatMeshVector(this, vector);
+  }
+
+  serializeIfcModel(model) {
+    return new SerializedMesh(model);
+  }
+
+  reconstructIfcModel(model) {
+    return MeshReconstructor.new(model);
+  }
+
+}
+
+class PropertyHandler {
+
+  constructor(handler) {
+    this.handler = handler;
+    this.API = WorkerAPIs.properties;
+  }
+
+  getExpressId(geometry, faceIndex) {
+    if (!geometry.index)
+      throw new Error('Geometry does not have index information.');
+    const geoIndex = geometry.index.array;
+    return geometry.attributes[IdAttrName].getX(geoIndex[3 * faceIndex]);
+  }
+
+  getAllItemsOfType(modelID, type, verbose) {
+    return this.handler.request(this.API, WorkerActions.getAllItemsOfType, {
+      modelID,
+      type,
+      verbose
+    });
+  }
+
+  getItemProperties(modelID, elementID, recursive) {
+    return this.handler.request(this.API, WorkerActions.getItemProperties, {
+      modelID,
+      elementID,
+      recursive
+    });
+  }
+
+  getMaterialsProperties(modelID, elementID, recursive) {
+    return this.handler.request(this.API, WorkerActions.getMaterialsProperties, {
+      modelID,
+      elementID,
+      recursive
+    });
+  }
+
+  getPropertySets(modelID, elementID, recursive) {
+    return this.handler.request(this.API, WorkerActions.getPropertySets, {
+      modelID,
+      elementID,
+      recursive
+    });
+  }
+
+  getTypeProperties(modelID, elementID, recursive) {
+    return this.handler.request(this.API, WorkerActions.getTypeProperties, {
+      modelID,
+      elementID,
+      recursive
+    });
+  }
+
+  getSpatialStructure(modelID, includeProperties) {
+    return this.handler.request(this.API, WorkerActions.getSpatialStructure, {
+      modelID,
+      includeProperties
+    });
+  }
+
+}
+
+class WebIfcHandler {
+
+  constructor(handler, serializer) {
+    this.handler = handler;
+    this.serializer = serializer;
+    this.API = WorkerAPIs.webIfc;
+  }
+
+  async Init() {
+    this.wasmModule = true;
+    return this.handler.request(this.API, WorkerActions.Init);
+  }
+
+  async OpenModel(data, settings) {
+    return this.handler.request(this.API, WorkerActions.OpenModel, {
+      data,
+      settings
+    });
+  }
+
+  async CreateModel(settings) {
+    return this.handler.request(this.API, WorkerActions.CreateModel, {
+      settings
+    });
+  }
+
+  async ExportFileAsIFC(modelID) {
+    return this.handler.request(this.API, WorkerActions.ExportFileAsIFC, {
+      modelID
+    });
+  }
+
+  async GetGeometry(modelID, geometryExpressID) {
+    this.handler.serializeHandlers[this.handler.requestID] = (geom) => {
+      return this.serializer.reconstructIfcGeometry(geom);
+    };
+    return this.handler.request(this.API, WorkerActions.GetGeometry, {
+      modelID,
+      geometryExpressID
+    });
+  }
+
+  async GetLine(modelID, expressID, flatten) {
+    return this.handler.request(this.API, WorkerActions.GetLine, {
+      modelID,
+      expressID,
+      flatten
+    });
+  }
+
+  async GetAndClearErrors(modelID) {
+    this.handler.serializeHandlers[this.handler.requestID] = (vector) => {
+      return this.serializer.reconstructVector(vector);
+    };
+    return this.handler.request(this.API, WorkerActions.GetAndClearErrors, {
+      modelID
+    });
+  }
+
+  async WriteLine(modelID, lineObject) {
+    return this.handler.request(this.API, WorkerActions.WriteLine, {
+      modelID,
+      lineObject
+    });
+  }
+
+  async FlattenLine(modelID, line) {
+    return this.handler.request(this.API, WorkerActions.FlattenLine, {
+      modelID,
+      line
+    });
+  }
+
+  async GetRawLineData(modelID, expressID) {
+    return this.handler.request(this.API, WorkerActions.GetRawLineData, {
+      modelID,
+      expressID
+    });
+  }
+
+  async WriteRawLineData(modelID, data) {
+    return this.handler.request(this.API, WorkerActions.WriteRawLineData, {
+      modelID,
+      data
+    });
+  }
+
+  async GetLineIDsWithType(modelID, type) {
+    this.handler.serializeHandlers[this.handler.requestID] = (vector) => {
+      return this.serializer.reconstructVector(vector);
+    };
+    return this.handler.request(this.API, WorkerActions.GetLineIDsWithType, {
+      modelID,
+      type
+    });
+  }
+
+  async GetAllLines(modelID) {
+    this.handler.serializeHandlers[this.handler.requestID] = (vector) => {
+      return this.serializer.reconstructVector(vector);
+    };
+    return this.handler.request(this.API, WorkerActions.GetAllLines, {
+      modelID
+    });
+  }
+
+  async SetGeometryTransformation(modelID, transformationMatrix) {
+    return this.handler.request(this.API, WorkerActions.SetGeometryTransformation, {
+      modelID,
+      transformationMatrix
+    });
+  }
+
+  async GetCoordinationMatrix(modelID) {
+    return this.handler.request(this.API, WorkerActions.GetCoordinationMatrix, {
+      modelID
+    });
+  }
+
+  async GetVertexArray(ptr, size) {
+    return this.handler.request(this.API, WorkerActions.GetVertexArray, {
+      ptr,
+      size
+    });
+  }
+
+  async GetIndexArray(ptr, size) {
+    return this.handler.request(this.API, WorkerActions.GetIndexArray, {
+      ptr,
+      size
+    });
+  }
+
+  async getSubArray(heap, startPtr, sizeBytes) {
+    return this.handler.request(this.API, WorkerActions.getSubArray, {
+      heap,
+      startPtr,
+      sizeBytes
+    });
+  }
+
+  async CloseModel(modelID) {
+    return this.handler.request(this.API, WorkerActions.CloseModel, {
+      modelID
+    });
+  }
+
+  async StreamAllMeshes(modelID, meshCallback) {
+    this.handler.callbackHandlers[this.handler.requestID] = {
+      action: meshCallback,
+      serializer: this.serializer.reconstructFlatMesh
+    };
+    return this.handler.request(this.API, WorkerActions.StreamAllMeshes, {
+      modelID
+    });
+  }
+
+  async StreamAllMeshesWithTypes(modelID, types, meshCallback) {
+    this.handler.callbackHandlers[this.handler.requestID] = {
+      action: meshCallback,
+      serializer: this.serializer.reconstructFlatMesh
+    };
+    return this.handler.request(this.API, WorkerActions.StreamAllMeshesWithTypes, {
+      modelID,
+      types
+    });
+  }
+
+  async IsModelOpen(modelID) {
+    return this.handler.request(this.API, WorkerActions.IsModelOpen, {
+      modelID
+    });
+  }
+
+  async LoadAllGeometry(modelID) {
+    this.handler.serializeHandlers[this.handler.requestID] = (vector) => {
+      return this.serializer.reconstructFlatMeshVector(vector);
+    };
+    return this.handler.request(this.API, WorkerActions.LoadAllGeometry, {
+      modelID
+    });
+  }
+
+  async GetFlatMesh(modelID, expressID) {
+    this.handler.serializeHandlers[this.handler.requestID] = (flatMesh) => {
+      return this.serializer.reconstructFlatMesh(flatMesh);
+    };
+    return this.handler.request(this.API, WorkerActions.GetFlatMesh, {
+      modelID,
+      expressID
+    });
+  }
+
+  async SetWasmPath(path) {
+    return this.handler.request(this.API, WorkerActions.SetWasmPath, {
+      path
+    });
+  }
+
+}
+
+class WorkerStateHandler {
+
+  constructor(handler) {
+    this.handler = handler;
+    this.API = WorkerAPIs.workerState;
+    this.state = this.handler.state;
+  }
+
+  async updateStateUseJson() {
+    const useJson = this.state.useJSON;
+    return this.handler.request(this.API, WorkerActions.updateStateUseJson, {
+      useJson
+    });
+  }
+
+  async updateStateWebIfcSettings() {
+    const webIfcSettings = this.state.webIfcSettings;
+    return this.handler.request(this.API, WorkerActions.updateStateWebIfcSettings, {
+      webIfcSettings
+    });
+  }
+
+  async updateModelStateTypes(modelID, types) {
+    return this.handler.request(this.API, WorkerActions.updateModelStateTypes, {
+      modelID,
+      types
+    });
+  }
+
+  async updateModelStateJsonData(modelID, jsonData) {
+    return this.handler.request(this.API, WorkerActions.updateModelStateJsonData, {
+      modelID,
+      jsonData
+    });
+  }
+
+  async loadJsonDataFromWorker(modelID, path) {
+    return this.handler.request(this.API, WorkerActions.loadJsonDataFromWorker, {
+      modelID,
+      path
+    });
+  }
+
+}
+
+var DBOperation;
+(function(DBOperation) {
+  DBOperation[DBOperation["transferIfcModel"] = 0] = "transferIfcModel";
+  DBOperation[DBOperation["transferIndividualItems"] = 1] = "transferIndividualItems";
+})(DBOperation || (DBOperation = {}));
+
+class IndexedDatabase {
+
+  async save(item, id) {
+    const open = IndexedDatabase.openOrCreateDB(id);
+    this.createSchema(open, id);
+    return new Promise((resolve, reject) => {
+      open.onsuccess = () => this.saveItem(item, open, id, resolve);
+    });
+  }
+
+  async load(id) {
+    const open = IndexedDatabase.openOrCreateDB(id);
+    return new Promise((resolve, reject) => {
+      open.onsuccess = () => this.loadItem(open, id, resolve);
+    });
+  }
+
+  createSchema(open, id) {
+    open.onupgradeneeded = function() {
+      const db = open.result;
+      db.createObjectStore(id.toString(), {
+        keyPath: "id"
+      });
+    };
+  }
+
+  saveItem(item, open, id, resolve) {
+    const {db, tx, store} = IndexedDatabase.getDBItems(open, id);
+    item.id = id;
+    store.put(item);
+    tx.oncomplete = () => IndexedDatabase.closeDB(db, tx, resolve);
+  }
+
+  loadItem(open, id, resolve) {
+    const {db, tx, store} = IndexedDatabase.getDBItems(open, id);
+    const item = store.get(id);
+    const callback = () => {
+      delete item.result.id;
+      resolve(item.result);
+    };
+    tx.oncomplete = () => IndexedDatabase.closeDB(db, tx, callback);
+  }
+
+  static getDBItems(open, id) {
+    const db = open.result;
+    const tx = db.transaction(id.toString(), "readwrite");
+    const store = tx.objectStore(id.toString());
+    return {
+      db,
+      tx,
+      store
+    };
+  }
+
+  static openOrCreateDB(id) {
+    return indexedDB.open(id.toString(), 1);
+  }
+
+  static closeDB(db, tx, resolve) {
+    db.close();
+    resolve("success");
+  }
+
+}
+
+class ParserHandler {
+
+  constructor(handler, serializer, BVH, IDB) {
+    this.handler = handler;
+    this.serializer = serializer;
+    this.BVH = BVH;
+    this.IDB = IDB;
+    this.optionalCategories = {
+      [IFCSPACE]: true,
+      [IFCOPENINGELEMENT]: false
+    };
+    this.API = WorkerAPIs.parser;
+  }
+
+  async setupOptionalCategories(config) {
+    this.optionalCategories = config;
+    return this.handler.request(this.API, WorkerActions.setupOptionalCategories, {
+      config
+    });
+  }
+
+  async parse(buffer, coordinationMatrix) {
+    this.handler.onprogressHandlers[this.handler.requestID] = (progress) => {
+      if (this.handler.state.onProgress)
+        this.handler.state.onProgress(progress);
+    };
+    this.handler.serializeHandlers[this.handler.requestID] = async (result) => {
+      this.updateState(result.modelID);
+      return this.getModel();
+    };
+    return this.handler.request(this.API, WorkerActions.parse, {
+      buffer,
+      coordinationMatrix
+    });
+  }
+
+  getAndClearErrors(_modelId) {}
+
+  updateState(modelID) {
+    this.handler.state.models[modelID] = {
+      modelID: modelID,
+      mesh: {},
+      types: {},
+      jsonData: {}
+    };
+  }
+
+  async getModel() {
+    const serializedModel = await this.IDB.load(DBOperation.transferIfcModel);
+    const model = this.serializer.reconstructIfcModel(serializedModel);
+    this.BVH.applyThreeMeshBVH(model.geometry);
+    this.handler.state.models[model.modelID].mesh = model;
+    return model;
+  }
+
+}
+
+class IFCWorkerHandler {
+
+  constructor(state, BVH) {
+    this.state = state;
+    this.BVH = BVH;
+    this.requestID = 0;
+    this.rejectHandlers = {};
+    this.resolveHandlers = {};
+    this.serializeHandlers = {};
+    this.callbackHandlers = {};
+    this.onprogressHandlers = {};
+    this.serializer = new Serializer();
+    this.IDB = new IndexedDatabase();
+    this.workerPath = this.state.worker.path;
+    this.ifcWorker = new Worker(this.workerPath);
+    this.ifcWorker.onmessage = (data) => this.handleResponse(data);
+    this.properties = new PropertyHandler(this);
+    this.parser = new ParserHandler(this, this.serializer, this.BVH, this.IDB);
+    this.webIfc = new WebIfcHandler(this, this.serializer);
+    this.workerState = new WorkerStateHandler(this);
+  }
+
+  request(worker, action, args) {
+    const data = {
+      worker,
+      action,
+      args,
+      id: this.requestID,
+      result: undefined,
+      onProgress: false
+    };
+    return new Promise((resolve, reject) => {
+      this.resolveHandlers[this.requestID] = resolve;
+      this.rejectHandlers[this.requestID] = reject;
+      this.requestID++;
+      this.ifcWorker.postMessage(data);
+    });
+  }
+
+  async terminate() {
+    await this.request(WorkerAPIs.workerState, WorkerActions.dispose);
+    await this.request(WorkerAPIs.webIfc, WorkerActions.DisposeWebIfc);
+    this.ifcWorker.terminate();
+  }
+
+  async Close() {
+    await this.request(WorkerAPIs.webIfc, WorkerActions.Close);
+  }
+
+  handleResponse(event) {
+    const data = event.data;
+    if (data.onProgress) {
+      this.resolveOnProgress(data);
+      return;
+    }
+    this.callHandlers(data);
+    delete this.resolveHandlers[data.id];
+    delete this.rejectHandlers[data.id];
+    delete this.onprogressHandlers[data.id];
+  }
+
+  callHandlers(data) {
+    try {
+      this.resolveSerializations(data);
+      this.resolveCallbacks(data);
+      this.resolveHandlers[data.id](data.result);
+    } catch (error) {
+      this.rejectHandlers[data.id](error);
+    }
+  }
+
+  resolveOnProgress(data) {
+    if (this.onprogressHandlers[data.id]) {
+      data.result = this.onprogressHandlers[data.id](data.result);
+    }
+  }
+
+  resolveSerializations(data) {
+    if (this.serializeHandlers[data.id]) {
+      data.result = this.serializeHandlers[data.id](data.result);
+      delete this.serializeHandlers[data.id];
+    }
+  }
+
+  resolveCallbacks(data) {
+    if (this.callbackHandlers[data.id]) {
+      let callbackParameter = data.result;
+      if (this.callbackHandlers[data.id].serializer) {
+        callbackParameter = this.callbackHandlers[data.id].serializer(data.result);
+      }
+      this.callbackHandlers[data.id].action(callbackParameter);
+    }
+  }
+
+}
+
+class MemoryCleaner {
+
+  constructor(state) {
+    this.state = state;
+  }
+
+  async dispose() {
+    Object.keys(this.state.models).forEach(modelID => {
+      const model = this.state.models[parseInt(modelID, 10)];
+      model.mesh.removeFromParent();
+      const geom = model.mesh.geometry;
+      if (geom.disposeBoundsTree)
+        geom.disposeBoundsTree();
+      geom.dispose();
+      if (!Array.isArray(model.mesh.material))
+        model.mesh.material.dispose();
+      else
+        model.mesh.material.forEach(mat => mat.dispose());
+      model.mesh = null;
+      model.types = null;
+      model.jsonData = null;
+    });
+    this.state.api = null;
+    this.state.models = null;
+  }
+
+}
+
+class IFCUtils {
+
+  constructor(state) {
+    this.state = state;
+    this.map = {};
+  }
+
+  getMapping() {
+    this.map = this.reverseElementMapping(IfcTypesMap);
+  }
+
+  releaseMapping() {
+    this.map = {};
+  }
+
+  reverseElementMapping(obj) {
+    let reverseElement = {};
+    Object.keys(obj).forEach(key => {
+      reverseElement[obj[key]] = key;
+    });
+    return reverseElement;
+  }
+
+  isA(entity, entity_class) {
+    var test = false;
+    if (entity_class) {
+      if (IfcTypesMap[entity.type] === entity_class.toUpperCase()) {
+        test = true;
+      }
+      return test;
+    } else {
+      return IfcTypesMap[entity.type];
+    }
+  }
+
+  async byId(modelID, id) {
+    return this.state.api.GetLine(modelID, id);
+  }
+
+  async idsByType(modelID, entity_class) {
+    this.getMapping();
+    let entities_ids = await this.state.api.GetLineIDsWithType(modelID, Number(this.map[entity_class.toUpperCase()]));
+    this.releaseMapping();
+    return entities_ids;
+  }
+
+  async byType(modelID, entity_class) {
+    let entities_ids = await this.idsByType(modelID, entity_class);
+    if (entities_ids !== null) {
+      this.getMapping();
+      let items = [];
+      for (let i = 0; i < entities_ids.size(); i++) {
+        let entity = await this.byId(modelID, entities_ids.get(i));
+        items.push(entity);
+      }
+      this.releaseMapping();
+      return items;
+    }
+  }
+
+}
+
+class Data {
+
+  constructor(state) {
+    this.state = state;
+    this.isLoaded = false;
+    this.workPlans = {};
+    this.workSchedules = {};
+    this.workCalendars = {};
+    this.workTimes = {};
+    this.recurrencePatterns = {};
+    this.timePeriods = {};
+    this.tasks = {};
+    this.taskTimes = {};
+    this.lagTimes = {};
+    this.sequences = {};
+    this.utils = new IFCUtils(this.state);
+  }
+
+  async load(modelID) {
+    await this.loadTasks(modelID);
+    await this.loadWorkSchedules(modelID);
+    await this.loadWorkCalendars(modelID);
+    await this.loadWorkTimes(modelID);
+    await this.loadTimePeriods(modelID);
+    this.isLoaded = true;
+  }
+
+  async loadWorkSchedules(modelID) {
+    let workSchedules = await this.utils.byType(modelID, "IfcWorkSchedule");
+    for (let i = 0; i < workSchedules.length; i++) {
+      let workSchedule = workSchedules[i];
+      this.workSchedules[workSchedule.expressID] = {
+        "Id": workSchedule.expressID,
+        "Name": workSchedule.Name.value,
+        "Description": ((workSchedule.Description) ? workSchedule.Description.value : ""),
+        "Creators": [],
+        "CreationDate": ((workSchedule.CreationDate) ? workSchedule.CreationDate.value : ""),
+        "StartTime": ((workSchedule.StartTime) ? workSchedule.StartTime.value : ""),
+        "FinishTime": ((workSchedule.FinishTime) ? workSchedule.FinishTime.value : ""),
+        "TotalFloat": ((workSchedule.TotalFloat) ? workSchedule.TotalFloat.value : ""),
+        "RelatedObjects": [],
+      };
+    }
+    this.loadWorkScheduleRelatedObjects(modelID);
+  }
+
+  async loadWorkScheduleRelatedObjects(modelID) {
+    let relsControls = await this.utils.byType(modelID, "IfcRelAssignsToControl");
+    for (let i = 0; i < relsControls.length; i++) {
+      let relControls = relsControls[i];
+      let relatingControl = await this.utils.byId(modelID, relControls.RelatingControl.value);
+      let relatedObjects = relControls.RelatedObjects;
+      if (this.utils.isA(relatingControl, "IfcWorkSchedule")) {
+        for (var objectIndex = 0; objectIndex < relatedObjects.length; objectIndex++) {
+          this.workSchedules[relatingControl.expressID]["RelatedObjects"].push(relatedObjects[objectIndex].value);
+        }
+      }
+    }
+  }
+
+  async loadTasks(modelID) {
+    let tasks = await this.utils.byType(modelID, "IfcTask");
+    for (let i = 0; i < tasks.length; i++) {
+      let task = tasks[i];
+      this.tasks[task.expressID] = {
+        "Id": task.expressID,
+        "Name": ((task.Name) ? task.Name.value : ""),
+        "PredefinedType": ((task.PredefinedType) ? task.PredefinedType.value : ""),
+        "TaskTime": ((task.TaskTime) ? await this.utils.byId(modelID, task.TaskTime.value) : ""),
+        "Identification": ((task.Identification) ? task.Identification.value : ""),
+        "IsMilestone": ((task.IsMilestone) ? task.IsMilestone.value : ""),
+        "IsPredecessorTo": [],
+        "IsSucessorFrom": [],
+        "Inputs": [],
+        "Resources": [],
+        "Outputs": [],
+        "Controls": [],
+        "Nests": [],
+        "IsNestedBy": [],
+        "OperatesOn": [],
+        "HasAssignmentsWorkCalendars": [],
+      };
+    }
+    await this.loadTaskSequence(modelID);
+    await this.loadTaskOutputs(modelID);
+    await this.loadTaskNesting(modelID);
+    await this.loadTaskOperations(modelID);
+    await this.loadAssignementsWorkCalendar(modelID);
+  }
+
+  async loadTaskSequence(modelID) {
+    let relsSequence = await this.utils.idsByType(modelID, "IfcRelSequence");
+    for (let i = 0; i < relsSequence.size(); i++) {
+      let relSequenceId = relsSequence.get(i);
+      if (relSequenceId !== 0) {
+        let relSequence = await this.utils.byId(modelID, relSequenceId);
+        let related_process = relSequence.RelatedProcess.value;
+        let relatingProcess = relSequence.RelatingProcess.value;
+        this.tasks[relatingProcess]["IsPredecessorTo"].push(relSequence.expressID);
+        this.tasks[related_process]["IsSucessorFrom"].push(relSequence.expressID);
+      }
+    }
+  }
+
+  async loadTaskOutputs(modelID) {
+    let rels_assigns_to_product = await this.utils.byType(modelID, "IfcRelAssignsToProduct");
+    for (let i = 0; i < rels_assigns_to_product.length; i++) {
+      let relAssignsToProduct = rels_assigns_to_product[i];
+      let relatedObject = await this.utils.byId(modelID, relAssignsToProduct.RelatedObjects[0].value);
+      if (this.utils.isA(relatedObject, "IfcTask")) {
+        let relatingProduct = await this.utils.byId(modelID, relAssignsToProduct.RelatingProduct.value);
+        this.tasks[relatedObject.expressID]["Outputs"].push(relatingProduct.expressID);
+      }
+    }
+  }
+
+  async loadTaskNesting(modelID) {
+    let rels_nests = await this.utils.byType(modelID, "IfcRelNests");
+    for (let i = 0; i < rels_nests.length; i++) {
+      let relNests = rels_nests[i];
+      let relating_object = await this.utils.byId(modelID, relNests.RelatingObject.value);
+      if (this.utils.isA(relating_object, "IfcTask")) {
+        let relatedObjects = relNests.RelatedObjects;
+        for (var object_index = 0; object_index < relatedObjects.length; object_index++) {
+          this.tasks[relating_object.expressID]["IsNestedBy"].push(relatedObjects[object_index].value);
+          this.tasks[relatedObjects[object_index].value]["Nests"].push(relating_object.expressID);
+        }
+      }
+    }
+  }
+
+  async loadTaskOperations(modelID) {
+    let relsAssignsToProcess = await this.utils.byType(modelID, "IfcRelAssignsToProcess");
+    for (let i = 0; i < relsAssignsToProcess.length; i++) {
+      let relAssignToProcess = relsAssignsToProcess[i];
+      let relatingProcess = await this.utils.byId(modelID, relAssignToProcess.RelatingProcess.value);
+      if (this.utils.isA(relatingProcess, "IfcTask")) {
+        let relatedObjects = relAssignToProcess.RelatedObjects;
+        for (var object_index = 0; object_index < relatedObjects.length; object_index++) {
+          this.tasks[relatingProcess.expressID]["OperatesOn"].push(relatedObjects[object_index].value);
+        }
+      }
+    }
+  }
+
+  async loadAssignementsWorkCalendar(modelID) {
+    let relsAssignsToControl = await this.utils.byType(modelID, "IfcRelAssignsToControl");
+    for (let i = 0; i < relsAssignsToControl.length; i++) {
+      let relAssignsToControl = relsAssignsToControl[i];
+      let relatingControl = await this.utils.byId(modelID, relAssignsToControl.RelatingControl.value);
+      if (this.utils.isA(relatingControl, "IfcWorkCalendar")) {
+        let relatedObjects = relAssignsToControl.RelatedObjects;
+        for (var object_index = 0; object_index < relatedObjects.length; object_index++) {
+          this.tasks[relatedObjects[object_index].value]["HasAssignmentsWorkCalendars"].push(relatingControl.expressID);
+        }
+      }
+    }
+  }
+
+  async loadWorkCalendars(modelID) {
+    let workCalendars = await this.utils.byType(modelID, "IfcWorkCalendar");
+    for (let i = 0; i < workCalendars.length; i++) {
+      let workCalendar = workCalendars[i];
+      let workCalenderData = {
+        "Id": workCalendar.expressID,
+        "Name": ((workCalendar.Name) ? workCalendar.Name.value : ""),
+        "Description": ((workCalendar.Description) ? workCalendar.Description.value : ""),
+        "WorkingTimes": ((workCalendar.WorkingTimes) ? workCalendar.WorkingTimes : []),
+        "ExceptionTimes": ((workCalendar.ExceptionTimes) ? workCalendar.ExceptionTimes : []),
+      };
+      this.workCalendars[workCalendar.expressID] = workCalenderData;
+    }
+  }
+
+  async loadWorkTimes(modelID) {
+    let workTimes = await this.utils.byType(modelID, "IfcWorkTime");
+    for (let i = 0; i < workTimes.length; i++) {
+      let workTime = workTimes[i];
+      let workTimeData = {
+        "Name": ((workTime.Name) ? workTime.Name.value : ""),
+        "RecurrencePattern": ((workTime.RecurrencePattern) ? await this.utils.byId(modelID, workTime.RecurrencePattern.value) : ""),
+        "Start": ((workTime.Start) ? new Date(workTime.Start.value) : ""),
+        "Finish": ((workTime.Finish) ? new Date(workTime.Finish.value) : ""),
+      };
+      this.workTimes[workTime.expressID] = workTimeData;
+    }
+  }
+
+  async loadTimePeriods(modelID) {
+    let timePeriods = await this.utils.byType(modelID, "IfcTimePeriod");
+    for (let i = 0; i < timePeriods.length; i++) {
+      let timePeriod = timePeriods[i];
+      let workTimeData = {
+        "StartTime": ((timePeriod.StartTime) ? new Date(timePeriod.StartTime.value) : ""),
+        "EndTime": ((timePeriod.EndTime) ? new Date(timePeriod.EndTime.value) : ""),
+      };
+      this.timePeriods[timePeriod.expressID] = workTimeData;
+    }
+  }
+
+}
+
+class IFCManager {
+
+  constructor() {
+    this.state = {
+      models: [],
+      api: new IfcAPI2(),
+      useJSON: false,
+      worker: {
+        active: false,
+        path: ''
+      }
+    };
+    this.BVH = new BvhManager();
+    this.typesMap = IfcTypesMap;
+    this.parser = new IFCParser(this.state, this.BVH);
+    this.subsets = new SubsetManager(this.state, this.BVH);
+    this.utils = new IFCUtils(this.state);
+    this.sequenceData = new Data(this.state);
+    this.properties = new PropertyManager(this.state);
+    this.types = new TypeManager(this.state);
+    this.cleaner = new MemoryCleaner(this.state);
+  }
+
+  get ifcAPI() {
+    return this.state.api;
+  }
+
+  async parse(buffer) {
+    var _a;
+    const model = await this.parser.parse(buffer, (_a = this.state.coordinationMatrix) === null || _a === void 0 ? void 0 : _a.toArray());
+    model.setIFCManager(this);
+    await this.types.getAllTypes(this.worker);
+    return model;
+  }
+
+  async setWasmPath(path) {
+    this.state.api.SetWasmPath(path);
+    this.state.wasmPath = path;
+  }
+
+  setupThreeMeshBVH(computeBoundsTree, disposeBoundsTree, acceleratedRaycast) {
+    this.BVH.initializeMeshBVH(computeBoundsTree, disposeBoundsTree, acceleratedRaycast);
+  }
+
+  setOnProgress(onProgress) {
+    this.state.onProgress = onProgress;
+  }
+
+  setupCoordinationMatrix(matrix) {
+    this.state.coordinationMatrix = matrix;
+  }
+
+  clearCoordinationMatrix() {
+    delete this.state.coordinationMatrix;
+  }
+
+  async applyWebIfcConfig(settings) {
+    this.state.webIfcSettings = settings;
+    if (this.state.worker.active && this.worker) {
+      await this.worker.workerState.updateStateWebIfcSettings();
+    }
+  }
+
+  async useWebWorkers(active, path) {
+    if (this.state.worker.active === active)
+      return;
+    this.state.api = null;
+    if (active) {
+      if (!path)
+        throw new Error('You must provide a path to the web worker.');
+      this.state.worker.active = active;
+      this.state.worker.path = path;
+      await this.initializeWorkers();
+      const wasm = this.state.wasmPath;
+      if (wasm)
+        await this.setWasmPath(wasm);
+    } else {
+      this.state.api = new IfcAPI2();
+    }
+  }
+
+  async useJSONData(useJSON = true) {
+    var _a;
+    this.state.useJSON = useJSON;
+    if (useJSON) {
+      await ((_a = this.worker) === null || _a === void 0 ? void 0 : _a.workerState.updateStateUseJson());
+    }
+  }
+
+  async addModelJSONData(modelID, data) {
+    var _a;
+    const model = this.state.models[modelID];
+    if (!model)
+      throw new Error('The specified model for the JSON data does not exist');
+    if (this.state.worker.active) {
+      await ((_a = this.worker) === null || _a === void 0 ? void 0 : _a.workerState.updateModelStateJsonData(modelID, data));
+    } else {
+      model.jsonData = data;
+    }
+  }
+
+  async loadJsonDataFromWorker(modelID, path) {
+    var _a;
+    if (this.state.worker.active) {
+      await ((_a = this.worker) === null || _a === void 0 ? void 0 : _a.workerState.loadJsonDataFromWorker(modelID, path));
+    }
+  }
+
+  close(modelID, scene) {
+    this.state.api.CloseModel(modelID);
+    if (scene)
+      scene.remove(this.state.models[modelID].mesh);
+    delete this.state.models[modelID];
+  }
+
+  getExpressId(geometry, faceIndex) {
+    return this.properties.getExpressId(geometry, faceIndex);
+  }
+
+  getAllItemsOfType(modelID, type, verbose) {
+    return this.properties.getAllItemsOfType(modelID, type, verbose);
+  }
+
+  getItemProperties(modelID, id, recursive = false) {
+    return this.properties.getItemProperties(modelID, id, recursive);
+  }
+
+  getPropertySets(modelID, id, recursive = false) {
+    return this.properties.getPropertySets(modelID, id, recursive);
+  }
+
+  getTypeProperties(modelID, id, recursive = false) {
+    return this.properties.getTypeProperties(modelID, id, recursive);
+  }
+
+  getMaterialsProperties(modelID, id, recursive = false) {
+    return this.properties.getMaterialsProperties(modelID, id, recursive);
+  }
+
+  getIfcType(modelID, id) {
+    const typeID = this.state.models[modelID].types[id];
+    return IfcElements[typeID];
+  }
+
+  getSpatialStructure(modelID, includeProperties) {
+    return this.properties.getSpatialStructure(modelID, includeProperties);
+  }
+
+  getSubset(modelID, material, customId) {
+    return this.subsets.getSubset(modelID, material, customId);
+  }
+
+  removeSubset(modelID, material, customID) {
+    this.subsets.removeSubset(modelID, material, customID);
+  }
+
+  createSubset(config) {
+    return this.subsets.createSubset(config);
+  }
+
+  removeFromSubset(modelID, ids, customID, material) {
+    return this.subsets.removeFromSubset(modelID, ids, customID, material);
+  }
+
+  clearSubset(modelID, customID, material) {
+    return this.subsets.clearSubset(modelID, customID, material);
+  }
+
+  async isA(entity, entity_class) {
+    return this.utils.isA(entity, entity_class);
+  }
+
+  async getSequenceData(modelID) {
+    await this.sequenceData.load(modelID);
+    return this.sequenceData;
+  }
+
+  async byType(modelID, entityClass) {
+    return this.utils.byType(modelID, entityClass);
+  }
+
+  async byId(modelID, id) {
+    return this.utils.byId(modelID, id);
+  }
+
+  async idsByType(modelID, entityClass) {
+    return this.utils.idsByType(modelID, entityClass);
+  }
+
+  async dispose() {
+    IFCModel.dispose();
+    await this.cleaner.dispose();
+    this.subsets.dispose();
+    if (this.worker && this.state.worker.active)
+      await this.worker.terminate();
+    this.state = null;
+  }
+
+  async disposeMemory() {
+    var _a;
+    if (this.state.worker.active) {
+      await ((_a = this.worker) === null || _a === void 0 ? void 0 : _a.Close());
+    } else {
+      this.state.api.Close();
+      this.state.api = null;
+      this.state.api = new IfcAPI2();
+    }
+  }
+
+  getAndClearErrors(modelID) {
+    return this.parser.getAndClearErrors(modelID);
+  }
+
+  async initializeWorkers() {
+    this.worker = new IFCWorkerHandler(this.state, this.BVH);
+    this.state.api = this.worker.webIfc;
+    this.properties = this.worker.properties;
+    await this.worker.parser.setupOptionalCategories(this.parser.optionalCategories);
+    this.parser = this.worker.parser;
+    await this.worker.workerState.updateStateUseJson();
+    await this.worker.workerState.updateStateWebIfcSettings();
+  }
+
+}
+
+class IFCLoader extends Loader {
+
+  constructor(manager) {
+    super(manager);
+    this.ifcManager = new IFCManager();
+  }
+
+  load(url, onLoad, onProgress, onError) {
+    const scope = this;
+    const loader = new FileLoader(scope.manager);
+    this.onProgress = onProgress;
+    loader.setPath(scope.path);
+    loader.setResponseType('arraybuffer');
+    loader.setRequestHeader(scope.requestHeader);
+    loader.setWithCredentials(scope.withCredentials);
+    loader.load(url, async function (buffer) {
+      try {
+        if (typeof buffer == 'string') {
+          throw new Error('IFC files must be given as a buffer!');
+        }
+        onLoad(await scope.parse(buffer));
+      } catch (e) {
+        if (onError) {
+          onError(e);
+        } else {
+          console.error(e);
+        }
+        scope.manager.itemError(url);
+      }
+    }, onProgress, onError);
+  }
+
+  parse(buffer) {
+    return this.ifcManager.parse(buffer);
+  }
 
 }
 
@@ -107239,7 +107239,7 @@ toArray = function toArray(value, scope, leaveStrings) {
     return toArray(v, el.querySelectorAll ? el : el === value ? _warn("Invalid scope") || _doc$1.createElement("div") : value);
   };
 },
-    shuffle = function shuffle(a) {
+    shuffle$1 = function shuffle(a) {
   return a.sort(function () {
     return .5 - Math.random();
   });
@@ -107314,7 +107314,7 @@ distribute = function distribute(v) {
         d < min && (min = d);
       }
 
-      from === "random" && shuffle(distances);
+      from === "random" && shuffle$1(distances);
       distances.max = max - min;
       distances.min = min;
       distances.v = l = (parseFloat(vars.amount) || parseFloat(vars.each) * (wrapAt > l ? l - 1 : !axis ? Math.max(wrapAt, l / wrapAt) : axis === "y" ? l / wrapAt : wrapAt) || 0) * (from === "edges" ? -1 : 1);
@@ -110529,7 +110529,7 @@ var _gsap = {
     pipe: pipe,
     unitize: unitize,
     interpolate: interpolate,
-    shuffle: shuffle
+    shuffle: shuffle$1
   },
   install: _install,
   effects: _effects,
@@ -121465,6 +121465,16 @@ const IfcCategories = {
   IFCWINDOW,
   IFCPLATE,
   IFCMEMBER,
+  IFCBEAM,
+  IFCCOLUMN,
+  IFCCURTAINWALL,
+  IFCRAILING,
+  IFCRAMP,
+  IFCSTAIR,
+  IFCSTAIRFLIGHT,
+  IFCROOF,
+  IFCPILE,
+  IFCFOOTING,
 };
 
 const categoryNameMap = {
@@ -121475,12 +121485,43 @@ const categoryNameMap = {
   Windows: "IFCWINDOW",
   CurtainPanels: "IFCPLATE",
   StructuralMembers: "IFCMEMBER",
+  Beams: "IFCBEAM",
+  Columns: "IFCCOLUMN",
+  CurtainWalls: "IFCCURTAINWALL",
+  Railings: "IFCRAILING",
+  Ramps: "IFCRAMP",
+  Stairs: "IFCSTAIR",
+  StairFlights: "IFCSTAIRFLIGHT",
+  Roofs: "IFCROOF",
+  Piles: "IFCPILE",
+  Footings: "IFCFOOTING",
 };
 
 const panelNames = {
   Category: "Category",
   Material: "Material",
+  Randomize: "Randomize",
 };
+
+const colorSet = [
+  "0xfe4a49",
+  "0x2ab7ca",
+  "0xfed766",
+  "0xf6abb6",
+  "0x03396c",
+  "0x6497b1",
+  "0x651e3e",
+  "0x009688",
+  "0xfdf498",
+  "0xf37736",
+  "0xbbbbbb",
+  "0xffcc5c",
+  "0x3c2f2f",
+  "0xbe9b7b",
+  "0x008744",
+  "0xffaaa5",
+  "0xffc425",
+];
 
 function hideDomElement(element) {
   element.classList.add("hidden");
@@ -121519,10 +121560,6 @@ function decodeMaterialLayersItem(materialObjectsArray, id, materialNames) {
   }
 }
 
-function compileCustomId(ids, prefix) {
-  return prefix + ids.slice(0, 10).join("");
-}
-
 function decodeIFCString(ifcString) {
   const ifcUnicodeRegEx = /\\X2\\(.*?)\\X0\\/giu;
   let resultString = ifcString;
@@ -121544,6 +121581,10 @@ function addMaterialNameToArray(name, id, materialNames) {
   }
 }
 
+function shuffle(array) {
+  return array.sort(() => Math.random() - 0.5);
+}
+
 const container = document.getElementById("viewer-container");
 const viewer = new IfcViewerAPI({
   container,
@@ -121553,13 +121594,14 @@ viewer.grid.setGrid();
 viewer.axes.setAxes();
 const scene = viewer.context.getScene();
 
-let loader = viewer.IFC.loader.ifcManager;
+const ifcManager = viewer.IFC.loader.ifcManager;
 
 let models = [];
 let modelData = {
   categories: {},
   materials: {},
   expressIds: [],
+  subsets: {},
 };
 let modelSubsets = [];
 
@@ -121573,29 +121615,16 @@ const input = document.getElementById("file-input");
 input.addEventListener(
   "change",
   async () => {
-    console.log(input.files[0]);
-
-    if (models.length > 0) {
-      console.log("Purging Models...");
-      await purgeModels();
-    }
-
-    console.log(models.length);
+    await purgeModels();
 
     const url = URL.createObjectURL(input.files[0]);
     const model = await viewer.IFC.loadIfcUrl(url);
     models.push(model);
     scene.add(model);
 
-    console.log(models);
-
+    await setMainButtonEvents(model.modelID);
     viewer.context.renderer.postProduction.active = true;
-    await compileModelData();
-
-    console.log(model.modelID);
-    console.log(modelData);
-
-    await setMainButtonEvents();
+    await compileModelData(model.modelID);
   },
   false
 );
@@ -121603,32 +121632,31 @@ input.addEventListener(
 async function purgeModels() {
   removeElementsFromScene(models);
   removeElementsFromScene(modelSubsets);
+  models = [];
+  modelSubsets = [];
   modelData = {
     categories: {},
     materials: {},
     expressIds: [],
+    subsets: {},
   };
-
-  loader = null;
-  loader = new IFCLoader();
-  loader = viewer.IFC.loader.ifcManager;
 
   const buttons = document.getElementsByClassName("dynamic");
   for (const button of buttons) {
     button.outerHTML = button.outerHTML;
   }
 
-  // const sidePanel = document.getElementById("side-panel");
-  // sidePanel.firstChild.remove();
+  const sidePanel = document.getElementById("side-panel");
+  hideDomElement(sidePanel);
 }
 
-async function setMainButtonEvents() {
+async function setMainButtonEvents(modelID) {
   const buttons = document.getElementsByClassName("dynamic");
+
   for (const button of buttons) {
     button.addEventListener("click", function () {
       const sidePanel = document.getElementById("side-panel");
       hideDomElement(sidePanel);
-
       for (const button of buttons) {
         button.style.backgroundColor = "white";
         button.style.border = "0.5px solid black";
@@ -121639,7 +121667,11 @@ async function setMainButtonEvents() {
         prevButton.style.border = "0.5px solid black";
         prevButton = undefined;
       } else {
-        compileAndShowUserPanel(button.id);
+        if (button.id == panelNames.Randomize) {
+          colorAllCategoriesAtRandom(Object.values(categoryNameMap), modelID);
+        } else {
+          compileAndShowUserPanel(button.id, modelID);
+        }
         button.style.backgroundColor = "navajowhite";
         button.style.border = "none";
         prevButton = button;
@@ -121648,13 +121680,24 @@ async function setMainButtonEvents() {
   }
 }
 
-async function compileAndShowUserPanel(buttonId) {
-  await toggleButtonSidePanel(buttonId);
+async function colorAllCategoriesAtRandom(categories, modelID) {
+  const shuffledColors = shuffle(colorSet);
+  for (let i = 0; i < categories.length; i++) {
+    console.log(i);
+    const ids = modelData.categories[categories[i]];
+    const categoryName = Object.keys(categoryNameMap)[categories[i]];
+    const hexColor = parseInt(shuffledColors[i]);
+    applyColorToElements(ids, hexColor, categoryName, modelID);
+  }
+}
+
+async function compileAndShowUserPanel(buttonId, modelID) {
+  await toggleButtonSidePanel(buttonId, modelID);
   const hexSpan = document.getElementById("hex-span");
   hexSpan.textContent = colorHexValue;
 }
 
-async function toggleButtonSidePanel(buttonId) {
+async function toggleButtonSidePanel(buttonId, modelID) {
   const sidePanel = document.getElementById("side-panel");
   while (sidePanel.firstChild) {
     sidePanel.removeChild(sidePanel.lastChild);
@@ -121662,11 +121705,20 @@ async function toggleButtonSidePanel(buttonId) {
 
   let values = [];
   if (buttonId == panelNames.Category) {
-    values = Object.keys(categoryNameMap);
+    const categoryKeys = Object.keys(modelData.categories);
+    const categoryValues = Object.values(modelData.categories);
+    for (let i = 0; i < categoryKeys.length; i++) {
+      if (categoryValues[i].length > 0) {
+        const categoryName = Object.keys(categoryNameMap).find(
+          (key) => categoryNameMap[key] === categoryKeys[i]
+        );
+        values.push(categoryName);
+      }
+    }
   } else if (buttonId == panelNames.Material) {
     values = Object.keys(modelData.materials);
   }
-  await populateSidePanel(buttonId, sidePanel, values);
+  await populateSidePanel(buttonId, sidePanel, values, modelID);
   showDomElement(sidePanel);
 
   window.ondblclick = () => {
@@ -121679,7 +121731,7 @@ async function toggleButtonSidePanel(buttonId) {
   };
 }
 
-async function populateSidePanel(buttonId, sidePanel, valueList) {
+async function populateSidePanel(buttonId, sidePanel, valueList, modelID) {
   const dropdownContainer = createAndSetDomElementAttributes("div", ["id"], ["dropdown"]);
 
   sidePanel.appendChild(createPanelContent(dropdownContainer, buttonId, valueList));
@@ -121689,23 +121741,23 @@ async function populateSidePanel(buttonId, sidePanel, valueList) {
   await createColorPicker();
   createPanelFooter();
 
-  await applyDropdownEvents(dropdownSelections);
-  applyPanelFooterEvents(buttonId);
+  await dropdownEvents(dropdownSelections);
+  applyPanelFooterEvents(buttonId, modelID);
 }
 
-function applyPanelFooterEvents(buttonId) {
+function applyPanelFooterEvents(buttonId, modelID) {
   const buttonApply = document.getElementById("apply-button");
   const buttonReset = document.getElementById("reset-button");
 
   buttonApply.addEventListener("click", async function () {
-    await applyColorsEventLogic(buttonId);
+    await applyColorsEventLogic(buttonId, modelID);
   });
   buttonReset.addEventListener("click", async function () {
     await removeElementsFromScene(modelSubsets);
   });
 }
 
-async function applyColorsEventLogic(buttonId) {
+async function applyColorsEventLogic(buttonId, modelID) {
   let matchingElementIds = undefined;
   const currentDropdownText = prevDropdown.textContent;
 
@@ -121713,11 +121765,10 @@ async function applyColorsEventLogic(buttonId) {
     const categoryString = categoryNameMap[currentDropdownText];
     matchingElementIds = modelData.categories[categoryString];
   } else if (buttonId == panelNames.Material) {
-    matchingElementIds = await collectElementsWithMaterials(currentDropdownText);
+    matchingElementIds = await collectElementsWithMaterials(currentDropdownText, modelID);
   }
-
-  await removeSingleSubset(matchingElementIds, currentDropdownText);
-  applyColorToElements(matchingElementIds, colorResult, currentDropdownText);
+  await removeSingleSubset(currentDropdownText);
+  applyColorToElements(matchingElementIds, colorResult, currentDropdownText, modelID);
 }
 
 function createPanelFooter() {
@@ -121760,7 +121811,7 @@ function createPanelContent(dropdownContainer, buttonId, values) {
   const dropdownUl = createAndSetDomElementAttributes(
     "ul",
     ["id", "tabindex", "role"],
-    ["ss_elem_list", "0", "listbox"]
+    ["elem_list", "0", "listbox"]
   );
   for (const value of values) {
     const dropdownLi = createAndSetDomElementAttributes(
@@ -121780,24 +121831,24 @@ function createPanelContent(dropdownContainer, buttonId, values) {
   return dropdownContainer;
 }
 
-async function applyDropdownEvents(selections) {
+async function dropdownEvents(selections) {
   for (const dropdown of selections) {
     dropdown.addEventListener("click", async function () {
       for (const dropdown of selections) {
         dropdown.style.backgroundColor = "white";
       }
       prevDropdown = dropdown;
-      dropdown.style.backgroundColor = "rgb(241, 240, 237)";
+      dropdown.style.backgroundColor = "rgb(240, 240, 240)";
     });
   }
 }
 
-async function collectElementsWithMaterials(materialName) {
+async function collectElementsWithMaterials(materialName, modelID) {
   const matchingElementIds = [];
   for (const id of modelData.expressIds) {
     const materialNames = {};
 
-    const materialProps = await loader.getMaterialsProperties(models[0].modelID, id, true);
+    const materialProps = await ifcManager.getMaterialsProperties(modelID, id, true);
     if (materialProps[0] != undefined) {
       filterMaterialByType(id, materialProps[0], materialNames);
     }
@@ -121809,19 +121860,17 @@ async function collectElementsWithMaterials(materialName) {
   return matchingElementIds;
 }
 
-async function applyColorToElements(expressIds, hex, currentDropdownText) {
+async function applyColorToElements(expressIds, hex, currentDropdownText, modelID) {
   const highlightMaterial = new MeshLambertMaterial({
     transparent: true,
-    opacity: 0.6,
+    opacity: 0.5,
     color: hex,
     depthTest: false,
   });
 
-  const subset = await createSubsetFromIds(expressIds, highlightMaterial, currentDropdownText);
-  console.log(subset);
-  console.log(subset.id);
-  console.log(subset.name);
+  const subset = await createSubsetFromIds(expressIds, highlightMaterial, modelID);
 
+  modelData.subsets[`${currentDropdownText}`] = subset;
   scene.add(subset);
   modelSubsets.push(subset);
 }
@@ -121850,16 +121899,15 @@ async function createColorPicker() {
   dropdown.appendChild(colorPickerDiv);
 }
 
-async function compileModelData() {
+async function compileModelData(modelID) {
   for (const categoryName of Object.keys(IfcCategories)) {
     const category = IfcCategories[categoryName];
-    const ids = await loader.getAllItemsOfType(0, category, true);
+    const ids = await ifcManager.getAllItemsOfType(modelID, category, true);
     const expressIDs = ids.map((id) => id.expressID);
     modelData.categories[`${categoryName}`] = expressIDs;
 
     modelData.expressIds = [...modelData.expressIds, ...expressIDs];
-
-    const materialsObjects = await collectElementsMaterials(expressIDs);
+    const materialsObjects = await collectElementsMaterials(expressIDs, modelID);
     const materialNames = await materialNamesFromObjects(materialsObjects);
     modelData.materials = { ...modelData.materials, ...materialNames };
   }
@@ -121892,10 +121940,10 @@ async function filterMaterialByType(id, item, materialNames) {
   }
 }
 
-async function collectElementsMaterials(expressIDs) {
+async function collectElementsMaterials(expressIDs, modelID) {
   const materials = {};
   for (const id of expressIDs) {
-    const materialProps = await loader.getMaterialsProperties(models[0].modelID, id, true);
+    const materialProps = await ifcManager.getMaterialsProperties(modelID, id, true);
     if (materialProps.length > 0) {
       materials[id] = materialProps;
     }
@@ -121903,37 +121951,25 @@ async function collectElementsMaterials(expressIDs) {
   return materials;
 }
 
-async function removeSingleSubset(ids, customIdPrefix) {
-  const customIdString = compileCustomId(ids, customIdPrefix);
-  console.log(customIdString);
-  console.log(modelSubsets);
-  // ifcLoader.clearSubset(models[0].modelID, ids, customIdString);
-  // const relevantSubset = ifcLoader.getSubset(models[0].modelID, customIdString);
-  // console.log(relevantSubset);
-  // ifcLoader.removeFromSubset(models[0].modelID, ids, customIdString)
-  for (const subset of modelSubsets) {
-    if (subset.customID == customIdString) {
-      scene.remove(subset);
-    }
-  }
+async function removeSingleSubset(currentDropdownText) {
+  const subsetToRemove = modelData.subsets[`${currentDropdownText}`];
+  scene.remove(subsetToRemove);
 }
 
 async function removeElementsFromScene(elements) {
   for (const element of elements) {
     scene.remove(element);
   }
-  elements = [];
 }
 
-async function createSubsetFromIds(ids, pickedMaterial, currentDropdownText) {
-  const customIdString = compileCustomId(ids, currentDropdownText);
-
-  return loader.createSubset({
-    modelID: models[0].modelID,
+async function createSubsetFromIds(ids, pickedMaterial, modelID) {
+  const subset = ifcManager.createSubset({
+    modelID: modelID,
     material: pickedMaterial,
     ids,
     scene,
     removePrevious: true,
-    customID: customIdString,
   });
+
+  return subset;
 }
